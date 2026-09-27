@@ -11,9 +11,27 @@ All notable changes to this project are documented here. Format follows
 - `--executable-path` flag on all three engines, to launch an
   already-installed Chrome/Chromium instead of an engine's own
   bundled-browser download.
+- A real 403/429 check in each engine's fetch function, classified as
+  `"blocked"` — previously indistinguishable from any other remote
+  error.
 
 ### Fixed
 
+- **Exit-code contract bug**: all three engines were calling
+  `finish_run(blocked=False, remote_api_error=False)` unconditionally,
+  regardless of what actually happened. This made `EXIT_BLOCKED` (3) and
+  `EXIT_REMOTE_API_ERROR` (5) both dead code paths — named in the
+  contract but never reachable — and meant a total network outage (every
+  ticker fails, none complete) was silently reported as `EXIT_ZERO_
+  PRODUCTS` (4), identical to the site legitimately returning nothing.
+  `output_writer.finish_run()` now auto-derives `remote_api_error` from
+  `tickers_completed`/`failed_tickers` (the same way it already derived
+  `partial`), suppressed when the caller signals `blocked=True` instead,
+  so a total block correctly surfaces as `3` rather than `5`. All three
+  engines now pass a real `blocked` flag, computed from the new 403/429
+  check above. `smoke_test.py` gained three regression checks: total
+  failure → `5`, all-blocked → `3`, and a genuine partial run is
+  confirmed to still reach `6` and isn't swallowed by either fix.
 - Puppeteer engine: confirmed live on a real Apple Silicon Mac that
   pyppeteer's own bundled Chromium (pinned revision 117.0.5938.0)
   segfaults on an actual headless run, even though it answers

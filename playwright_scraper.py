@@ -49,12 +49,22 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_BLOCKED_STATUSES = (403, 429)  # standard "you are blocked/rate-limited" statuses —
+# never observed live against this site (see tipranks_parser.py's module
+# docstring), but a real, well-known signal worth distinguishing from a
+# generic remote_api_error the moment it does show up, rather than
+# inventing a CAPTCHA/challenge-HTML heuristic this project has never
+# actually seen fire.
+_NOT_FOUND_STATUSES = (404, 400)
+
+
 def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]:
     """Returns (rating_or_None, error_kind). error_kind is None on
-    success, "not_found" for a real 404/400, or "remote_api_error" for
-    anything else (nav timeout, non-JSON response, etc.) — never raises,
-    so one bad ticker can't take a multi-ticker run down with it (CLAUDE.md
-    §6: a failed unit of work degrades, it doesn't crash the run)."""
+    success, "not_found" for a real 404/400, "blocked" for a real 403/429,
+    or "remote_api_error" for anything else (nav timeout, non-JSON
+    response, etc.) — never raises, so one bad ticker can't take a
+    multi-ticker run down with it (CLAUDE.md §6: a failed unit of work
+    degrades, it doesn't crash the run)."""
     page_url = ticker_page_url(ticker)
     payload_url = ticker_payload_url(ticker)
 
@@ -63,7 +73,9 @@ def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]
     except PlaywrightTimeoutError:
         return None, "remote_api_error"
 
-    if response is not None and response.status in (404, 400):
+    if response is not None and response.status in _BLOCKED_STATUSES:
+        return None, "blocked"
+    if response is not None and response.status in _NOT_FOUND_STATUSES:
         return None, "not_found"
 
     page.wait_for_timeout(READINESS_WAIT_MS)
@@ -80,7 +92,9 @@ def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]
     except Exception:
         return None, "remote_api_error"
 
-    if isinstance(payload, dict) and payload.get("__status") in (404, 400):
+    if isinstance(payload, dict) and payload.get("__status") in _BLOCKED_STATUSES:
+        return None, "blocked"
+    if isinstance(payload, dict) and payload.get("__status") in _NOT_FOUND_STATUSES:
         return None, "not_found"
     if not isinstance(payload, dict) or "models" not in payload:
         return None, "remote_api_error"
@@ -95,22 +109,28 @@ def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]
 
 def run(
     tickers: List[str], *, headless: bool = True, executable_path: Optional[str] = None
-) -> Tuple[List[TickerRating], List[str], List[str]]:
-    """Returns (ratings, tickers_completed, failed_tickers). A ticker is
-    "completed" whether it resolved to a rating or a confirmed
-    not-found; only a remote/engine error counts as a failure that could
-    make the run `partial`. `executable_path`, if given, is passed
-    straight to `chromium.launch()` — normally unnecessary (Playwright's
-    own bundled Chromium download has been reliable in this project's
-    testing), but kept for parity with `puppeteer_scraper.py`, where the
-    equivalent flag is a real, documented fix for a confirmed-live
-    engine bug (see that file's module docstring)."""
+) -> Tuple[List[TickerRating], List[str], List[str], List[str]]:
+    """Returns (ratings, tickers_completed, failed_tickers,
+    blocked_tickers). A ticker is "completed" whether it resolved to a
+    rating or a confirmed not-found; a "blocked" (403/429) or generic
+    remote/engine error both count as a failure that could make the run
+    `partial` — `blocked_tickers` is the subset of `failed_tickers` that
+    were specifically a block, so `main()` can set `finish_run`'s
+    `blocked` flag (previously always hardcoded False — see
+    `output_writer.finish_run`'s docstring for the bug this fixes).
+    `executable_path`, if given, is passed straight to
+    `chromium.launch()` — normally unnecessary (Playwright's own bundled
+    Chromium download has been reliable in this project's testing), but
+    kept for parity with `puppeteer_scraper.py`, where the equivalent
+    flag is a real, documented fix for a confirmed-live engine bug (see
+    that file's module docstring)."""
     if sync_playwright is None:
         raise RuntimeError("playwright is not installed")
 
     ratings: List[TickerRating] = []
     completed: List[str] = []
     failed: List[str] = []
+    blocked: List[str] = []
 
     with sync_playwright() as pw:
         launch_kwargs = {"headless": headless}
@@ -121,6 +141,10 @@ def run(
             page = browser.new_page()
             for ticker in tickers:
                 rating, error_kind = fetch_one(page, ticker)
+                if error_kind == "blocked":
+                    failed.append(ticker)
+                    blocked.append(ticker)
+                    continue
                 if error_kind == "remote_api_error":
                     failed.append(ticker)
                     continue
@@ -134,7 +158,7 @@ def run(
         finally:
             browser.close()
 
-    return ratings, completed, failed
+    return ratings, completed, failed, blocked
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -190,7 +214,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     started_at = time.time()
     try:
-        ratings, completed, failed = run(
+        ratings, completed, failed, blocked_tickers = run(
             tickers, headless=not args.headed, executable_path=args.executable_path
         )
     except Exception as exc:  # a real crash, not a per-ticker failure
@@ -205,7 +229,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         tickers_requested=tickers,
         tickers_completed=completed,
         failed_tickers=failed,
-        blocked=False,
+        blocked=bool(blocked_tickers),
+        # remote_api_error for a total (zero-completed) failure is now
+        # auto-derived inside finish_run() itself from tickers_completed/
+        # failed_tickers — see its docstring for the bug this replaced.
         remote_api_error=False,
         allow_empty=args.allow_empty,
         started_at=started_at,

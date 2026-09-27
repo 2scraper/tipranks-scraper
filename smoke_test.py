@@ -329,6 +329,65 @@ def _():
         assert mod.parse_args(["--ticker", "AAPL"]).executable_path is None, mod.__name__
 
 
+@check("a total run failure (every ticker fails, none complete) is EXIT_REMOTE_API_ERROR, "
+       "not EXIT_ZERO_PRODUCTS — a regression found live: all three engines were passing "
+       "remote_api_error=False unconditionally, so a network outage looked identical to "
+       "the site legitimately returning nothing")
+def _():
+    import output_writer as ow
+
+    def fake_run_total_failure(tickers, **kwargs):
+        return [], [], list(tickers), []  # nothing completed, nothing blocked either
+
+    for mod in ENGINE_MODULES:
+        original = mod.run
+        mod.run = fake_run_total_failure
+        try:
+            code = mod.main(["--ticker", "AAPL"])
+            assert code == ow.EXIT_REMOTE_API_ERROR, f"{mod.__name__}: got {code}"
+        finally:
+            mod.run = original
+
+
+@check("every engine can actually reach EXIT_BLOCKED via a real 403/429, "
+       "even when every ticker in the run was blocked (not just some)")
+def _():
+    import output_writer as ow
+
+    def fake_run_all_blocked(tickers, **kwargs):
+        return [], [], list(tickers), list(tickers)  # all failed, all of them "blocked"
+
+    for mod in ENGINE_MODULES:
+        original = mod.run
+        mod.run = fake_run_all_blocked
+        try:
+            code = mod.main(["--ticker", "AAPL"])
+            assert code == ow.EXIT_BLOCKED, f"{mod.__name__}: got {code}"
+        finally:
+            mod.run = original
+
+
+@check("a genuine partial run (one ticker succeeds, another fails with a plain "
+       "remote error) is still EXIT_PARTIAL, not swallowed by the total-failure fix above")
+def _():
+    import output_writer as ow
+    from tipranks_parser import TickerRating
+
+    def fake_run_partial(tickers, **kwargs):
+        good, bad = tickers[0], (tickers[1] if len(tickers) > 1 else "ZZZ")
+        rating = TickerRating(ticker=good, source="tipranks", source_url="x", scraped_at="x")
+        return [rating], [good], [bad], []
+
+    for mod in ENGINE_MODULES:
+        original = mod.run
+        mod.run = fake_run_partial
+        try:
+            code = mod.main(["--ticker", "AAPL", "--ticker", "MSFT", "--allow-empty"])
+            assert code == ow.EXIT_PARTIAL, f"{mod.__name__}: got {code}"
+        finally:
+            mod.run = original
+
+
 # --------------------------------------------------------------------------- #
 # repository hygiene
 # --------------------------------------------------------------------------- #
