@@ -121,10 +121,20 @@ CONFIRMED, from a real captured session:
   "confirmed unprotected" — unlike g2.com's DataDome, there is no known
   solvable challenge type to wire up here, because none was ever
   presented to solve.
-- A later pre-release audit did observe a real 403/429-class block after a
-  successful run from the same environment. The engines now classify that
-  outcome explicitly as `blocked` (exit 3), and the live canary fails rather
-  than presenting an availability-green badge with zero data.
+- A later pre-release audit did observe a real block: an HTTP 403 on the
+  page navigation itself, body "Just a moment...", final URL carrying
+  Cloudflare's `__cf_chl_rt_tk` challenge-token parameter — a genuine
+  Cloudflare JS challenge, not a generic rate-limit 429. Observed in a
+  local (non-CI) headless Playwright Chromium run, after an earlier run
+  from the same environment had already completed successfully (AAPL, plus
+  a confirmed-not-found ticker, both exit 0) — so this reads as a
+  behavior/volume-triggered challenge, not a block on the first request.
+  `stock-analysis/payload.json` fetched separately still answered 200
+  `application/json` in the same session; the challenge was only ever seen
+  on the page navigation. Every run after that consistently got `blocked`
+  (exit 3), confirming the classification. The engines classify this
+  outcome explicitly as `blocked` (exit 3), and the live canary fails
+  rather than presenting an availability-green badge with zero data.
 - The shipped `parse_payload()` / `output_writer.finish_run()` path
   itself (not just the network fetch) was run end-to-end against five
   freshly captured live payloads (NVDA, TSLA, JPM, DIS, KO): the payload
