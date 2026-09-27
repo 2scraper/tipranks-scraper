@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""playwright_scraper.py — primary (and, for now, only) engine for
+tipranks-scraper. Scrapes one thing: a stock ticker's forecast-page
+snapshot (Smart Score, analyst consensus, price target, Buy/Hold/Sell
+rating) from tipranks.com's free, unauthenticated data. No account, no
+proxy, no captcha solving — none of that is needed for this page, per
+`tipranks_parser.py`'s module docstring.
+
+Flow per ticker, confirmed live during research for this repo: navigate
+to `https://www.tipranks.com/stocks/{ticker}/stock-analysis`, then fetch
+the same-origin `.../stock-analysis/payload.json` from inside the page
+(a same-origin `fetch()`, not a separate cookie-less HTTP client) and
+parse the JSON. No DOM/CSS scraping is used for any field this repo
+cares about.
+
+The handful of engine constants allowed to vary per site (CLAUDE.md §5)
+are directly below; nothing else here should need site-specific tuning.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from datetime import datetime, timezone
+from typing import List, Optional, Tuple
+
+try:
+    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+except ImportError:  # pragma: no cover - exercised by smoke_test.py with no engine installed
+    sync_playwright = None
+    PlaywrightTimeoutError = Exception
+
+import output_writer
+from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run
+from tipranks_parser import (
+    is_allowed,
+    parse_payload,
+    ticker_page_url,
+    ticker_payload_url,
+    TickerRating,
+)
+
+# --- site-specific engine constants (CLAUDE.md §5) ---
+NAV_TIMEOUT_MS = 30_000
+READINESS_WAIT_MS = 2_000  # the SPA's own payload fetch happens right after load
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]:
+    """Returns (rating_or_None, error_kind). error_kind is None on
+    success, "not_found" for a real 404/400, or "remote_api_error" for
+    anything else (nav timeout, non-JSON response, etc.) — never raises,
+    so one bad ticker can't take a multi-ticker run down with it (CLAUDE.md
+    §6: a failed unit of work degrades, it doesn't crash the run)."""
+    page_url = ticker_page_url(ticker)
+    payload_url = ticker_payload_url(ticker)
+
+    try:
+        response = page.goto(page_url, timeout=NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+    except PlaywrightTimeoutError:
+        return None, "remote_api_error"
+
+    if response is not None and response.status in (404, 400):
+        return None, "not_found"
+
+    page.wait_for_timeout(READINESS_WAIT_MS)
+
+    try:
+        payload = page.evaluate(
+            """async (url) => {
+                const res = await fetch(url, {credentials: 'include'});
+                if (!res.ok) { return {__status: res.status}; }
+                return await res.json();
+            }""",
+            payload_url,
+        )
+    except Exception:
+        return None, "remote_api_error"
+
+    if isinstance(payload, dict) and payload.get("__status") in (404, 400):
+        return None, "not_found"
+    if not isinstance(payload, dict) or "models" not in payload:
+        return None, "remote_api_error"
+
+    rating = parse_payload(
+        payload, ticker, source_url=page_url, scraped_at=_now_iso()
+    )
+    if rating is None:
+        return None, "not_found"
+    return rating, None
+
+
+def run(tickers: List[str], *, headless: bool = True) -> Tuple[List[TickerRating], List[str], List[str]]:
+    """Returns (ratings, tickers_completed, failed_tickers). A ticker is
+    "completed" whether it resolved to a rating or a confirmed
+    not-found; only a remote/engine error counts as a failure that could
+    make the run `partial`."""
+    if sync_playwright is None:
+        raise RuntimeError("playwright is not installed")
+
+    ratings: List[TickerRating] = []
+    completed: List[str] = []
+    failed: List[str] = []
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=headless)
+        try:
+            page = browser.new_page()
+            for ticker in tickers:
+                rating, error_kind = fetch_one(page, ticker)
+                if error_kind == "remote_api_error":
+                    failed.append(ticker)
+                    continue
+                completed.append(ticker)
+                if rating is not None:
+                    ratings.append(rating)
+                # error_kind == "not_found" is a completed (not failed)
+                # ticker with zero rows contributed — same as g2-scraper
+                # treating a confirmed empty category as complete, not
+                # partial.
+        finally:
+            browser.close()
+
+    return ratings, completed, failed
+
+
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--ticker", action="append", dest="tickers", default=[],
+        help="A ticker symbol, e.g. AAPL. Repeatable.",
+    )
+    parser.add_argument(
+        "--tickers-file", default=None,
+        help="Path to a text file with one ticker per line.",
+    )
+    parser.add_argument("--format", choices=["json", "csv"], default="json")
+    parser.add_argument("--out", default="tipranks_results.json")
+    parser.add_argument(
+        "--allow-empty", action="store_true",
+        help="Write output even if zero ratings were collected.",
+    )
+    parser.add_argument(
+        "--headed", action="store_true",
+        help="Launch a visible browser instead of headless (debugging).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parse_args(argv)
+
+    tickers = list(args.tickers)
+    if args.tickers_file:
+        try:
+            with open(args.tickers_file, "r", encoding="utf-8") as f:
+                tickers.extend(line.strip() for line in f if line.strip())
+        except OSError as exc:
+            print(f"error: could not read --tickers-file: {exc}", file=sys.stderr)
+            return EXIT_BAD_USAGE
+
+    tickers = list(dict.fromkeys(t.upper() for t in tickers if t.strip()))
+    if not tickers:
+        print("error: no tickers given (use --ticker or --tickers-file)", file=sys.stderr)
+        return EXIT_BAD_USAGE
+
+    for ticker in tickers:
+        path = f"/stocks/{ticker.lower()}/stock-analysis"
+        if not is_allowed(path):
+            print(f"error: robots.txt disallows {path}", file=sys.stderr)
+            return EXIT_BAD_USAGE
+
+    started_at = time.time()
+    try:
+        ratings, completed, failed = run(tickers, headless=not args.headed)
+    except Exception as exc:  # a real crash, not a per-ticker failure
+        print(f"crash: {exc}", file=sys.stderr)
+        return EXIT_CRASH
+
+    return finish_run(
+        ratings=ratings,
+        out_path=args.out,
+        fmt=args.format,
+        engine="playwright",
+        tickers_requested=tickers,
+        tickers_completed=completed,
+        failed_tickers=failed,
+        blocked=False,
+        remote_api_error=False,
+        allow_empty=args.allow_empty,
+        started_at=started_at,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())
