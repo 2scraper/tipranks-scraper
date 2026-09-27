@@ -558,10 +558,18 @@ def _():
     assert header == ow.RATING_FIELD_NAMES
 
 
-@check("pyproject version has a matching released changelog section")
+@check("pyproject version has a matching released changelog section, if both files exist yet")
 def _():
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    # Neither file is part of the Docker image's COPY list (metadata for
+    # contributors, not something the shipped image needs) -- skip
+    # cleanly there instead of a bare FileNotFoundError, same as the
+    # credential-scanner check above for .github/ci_checks.py.
+    pyproject_path = ROOT / "pyproject.toml"
+    changelog_path = ROOT / "CHANGELOG.md"
+    if not pyproject_path.exists() or not changelog_path.exists():
+        return
+    pyproject = pyproject_path.read_text(encoding="utf-8")
+    changelog = changelog_path.read_text(encoding="utf-8")
     match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.M)
     assert match, "pyproject.toml has no project version"
     assert f"## [{match.group(1)}]" in changelog

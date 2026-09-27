@@ -54,8 +54,18 @@ works against tipranks.com right now."
   call.
 - The credential scanner (`.github/ci_checks.py`) passes, and the
   Dockerfile (when present) strips the test suite and never `COPY`s a
-  `.env` — both guarded to skip cleanly in contexts (like a Docker
-  build's own stripped-down `COPY` list) that don't have every file.
+  `.env`; the pyproject-version/CHANGELOG consistency check likewise —
+  all three guarded to skip cleanly in contexts (like a Docker build's
+  own stripped-down `COPY` list) that don't have every file. Found live:
+  the pyproject/CHANGELOG check wasn't guarded yet and broke the actual
+  `docker build` in CI the first time it ran for real, because
+  `pyproject.toml`/`CHANGELOG.md` are (deliberately) never `COPY`'d into
+  the image. Fixed alongside a second, older gap the same CI run
+  exposed: `diff_runs.py` itself was missing from the Dockerfile's
+  `COPY` list, so its own two tests failed with `ModuleNotFoundError`
+  inside the image. Neither had ever been caught before because a real
+  `docker build` had never actually been run anywhere until this
+  project's first CI push.
 
 ## What it does not cover
 
