@@ -71,9 +71,11 @@ All notable changes to this project are documented here. Format follows
   parsed Allow/Disallow rules no longer match the captured copy
   (`tipranks_parser._robots_rules` is now the public
   `parse_robots_rules(text)` so the canary can reuse it against live
-  text). **This tightening follows a real 403/429-class block observed
-  in a pre-release audit, after an earlier run from the same environment
-  had completed successfully — see `tipranks_parser.py`'s module
+  text). **This tightening follows a real block observed in a
+  pre-release audit: an HTTP 403 Cloudflare JS challenge ("Just a
+  moment...") on the page navigation, in a local headless Playwright
+  run, after an earlier run from the same environment had already
+  completed successfully — see `tipranks_parser.py`'s module
   docstring.**
 - `smoke_test.py`: stopped writing generated output into the repo's own
   working tree (temp dirs instead); added coverage for ticker

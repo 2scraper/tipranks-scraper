@@ -67,11 +67,15 @@ scripts' actual browser-automation code (`page.goto` + the in-page
 `fetch()` of `payload.json`, per engine) is only proven by a real live
 run, below — `smoke_test.py` never launches a browser at all.
 
-The `EXIT_BLOCKED` path has now fired in a real Playwright run during a
-pre-release audit, after an earlier run from the same environment completed
-successfully. `smoke_test.py` still proves the wiring deterministically by
-injecting a fake blocked result; the live condition cannot be provoked on
-demand and belongs to the scheduled canary.
+The `EXIT_BLOCKED` path has now fired in a real, local (non-CI) headless
+Playwright run during a pre-release audit: an HTTP 403 Cloudflare JS
+challenge ("Just a moment...", a `__cf_chl_rt_tk` token on the final URL)
+on the page navigation, after an earlier run from the same environment had
+already completed successfully — a behavior-triggered challenge, not a
+first-request block; `payload.json` fetched separately still answered 200
+in the same session. `smoke_test.py` still proves the wiring
+deterministically by injecting a fake blocked result; the live condition
+cannot be provoked on demand and belongs to the scheduled canary.
 
 ## Live testing checklist
 

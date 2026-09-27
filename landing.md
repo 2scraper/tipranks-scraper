@@ -34,10 +34,14 @@ and price target straight into JSON or CSV.
 **Bot protection.** tipranks.com sits behind Fastly (caching) and
 Cloudflare (a bot-management fingerprinting script loads on every page
 view, and Google reCAPTCHA's script is present but never auto-rendered).
-Neither challenged the original research session, but a later audit observed
-a real 403/429-class block. The scraper reports that state as exit 3 and the
-daily live canary treats it as unavailable rather than leaving a misleading
-green badge. See `tipranks_parser.py`'s module docstring for the full detail.
+Neither challenged the original research session, but a later audit
+observed a real one: an HTTP 403 Cloudflare JS challenge ("Just a
+moment...") on the page navigation, in a local headless Playwright run,
+after an earlier run had already completed successfully — behavior-
+triggered, not a first-request block. The scraper reports that state as
+exit 3 and the daily live canary treats it as unavailable rather than
+leaving a misleading green badge. See `tipranks_parser.py`'s module
+docstring for the full detail.
 
 ## Who this is for
 

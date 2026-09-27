@@ -141,9 +141,14 @@ DataDome/PerimeterX/Akamai/Imperva/Kasada/Arkose Labs signature was found
 either. That's "not observed to challenge this traffic," not "confirmed
 unprotected" — there's no known solvable challenge to wire up here
 because none was presented in that research session. A later audit did
-observe a real 403/429-class block, which the scraper now reports as exit 3.
-The daily live canary fails on that outcome so its green badge means data was
-actually collected, rather than only that the CLI did not crash.
+observe a real one: an HTTP 403 Cloudflare JS challenge ("Just a
+moment...", a `__cf_chl_rt_tk` token on the final URL) on the page
+navigation, in a local headless Playwright run, after an earlier run from
+the same environment had already completed successfully — a behavior-
+triggered challenge, not a first-request block. The scraper reports that
+as exit 3, and the daily live canary fails on that outcome so its green
+badge means data was actually collected, rather than only that the CLI
+did not crash.
 
 ## Engine notes
 
