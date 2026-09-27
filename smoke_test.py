@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """smoke_test.py — offline test suite. No engine driver required: it must
-pass with playwright NOT installed, same as every 2scraper family
-member's offline suite (CLAUDE.md §6). Run with `python3 smoke_test.py`.
+pass with NONE of playwright/selenium/pyppeteer installed, same as every
+2scraper family member's offline suite (CLAUDE.md §6). Run with
+`python3 smoke_test.py`.
 """
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -190,6 +192,52 @@ def _():
     assert not Path(ow.meta_path_for(out_path)).exists()
 
 
+@check("diff_runs.py correctly reports added/removed/rating/price-target/smart-score changes")
+def _():
+    import output_writer as ow
+    import diff_runs
+    from tipranks_parser import TickerRating
+
+    old_path, new_path = "/tmp/_smoke_diff_old.json", "/tmp/_smoke_diff_new.json"
+
+    old_aapl = TickerRating(
+        ticker="AAPL", source="tipranks", source_url="x", scraped_at="t",
+        consensus_rating_id="moderateBuy", consensus_rating_label="Moderate Buy",
+        price_target_average=330.0, smart_score=7,
+    )
+    old_msft = TickerRating(
+        ticker="MSFT", source="tipranks", source_url="x", scraped_at="t",
+        consensus_rating_id="strongBuy", price_target_average=570.0, smart_score=9,
+    )
+    new_aapl = TickerRating(
+        ticker="AAPL", source="tipranks", source_url="x", scraped_at="t",
+        consensus_rating_id="strongBuy", consensus_rating_label="Strong Buy",
+        price_target_average=345.0, smart_score=8,
+    )
+    new_nvda = TickerRating(
+        ticker="NVDA", source="tipranks", source_url="x", scraped_at="t",
+        consensus_rating_id="strongBuy", price_target_average=200.0, smart_score=10,
+    )
+
+    ow.finish_run(
+        ratings=[old_aapl, old_msft], out_path=old_path, fmt="json", engine="playwright",
+        tickers_requested=["AAPL", "MSFT"], tickers_completed=["AAPL", "MSFT"], failed_tickers=[],
+        blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+    )
+    ow.finish_run(
+        ratings=[new_aapl, new_nvda], out_path=new_path, fmt="json", engine="playwright",
+        tickers_requested=["AAPL", "NVDA"], tickers_completed=["AAPL", "NVDA"], failed_tickers=[],
+        blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+    )
+
+    result = diff_runs.diff(old_path, new_path)
+    assert result["added"] == ["NVDA"]
+    assert result["removed"] == ["MSFT"]
+    assert [r["ticker"] for r in result["rating_changed"]] == ["AAPL"]
+    assert [r["ticker"] for r in result["price_target_changed"]] == ["AAPL"]
+    assert [r["ticker"] for r in result["smart_score_changed"]] == ["AAPL"]
+
+
 @check("write_json / write_csv round-trip the full TickerRating schema")
 def _():
     import csv as csv_mod
@@ -221,43 +269,57 @@ def _dummy_rating():
 
 
 # --------------------------------------------------------------------------- #
-# playwright_scraper.py — importable and its non-network paths runnable with
-# no engine driver installed.
+# All three engines — importable with NO engine driver installed at all
+# (CLAUDE.md §6), and their non-network paths runnable without one.
 # --------------------------------------------------------------------------- #
-@check("playwright_scraper imports cleanly and rejects bad usage without touching the network")
+import playwright_scraper
+import selenium_scraper
+import puppeteer_scraper
+
+ENGINE_MODULES = [playwright_scraper, selenium_scraper, puppeteer_scraper]
+
+
+@check("every engine imports cleanly with no engine driver installed")
 def _():
-    import playwright_scraper as scraper
+    for mod in ENGINE_MODULES:
+        assert hasattr(mod, "main"), f"{mod.__name__} has no main()"
+        assert hasattr(mod, "is_allowed"), f"{mod.__name__} did not import tipranks_parser.is_allowed"
+
+
+@check("every engine rejects bad usage identically, without touching the network")
+def _():
     import output_writer as ow
 
-    assert scraper.main([]) == ow.EXIT_BAD_USAGE  # no --ticker/--tickers-file
+    for mod in ENGINE_MODULES:
+        assert mod.main([]) == ow.EXIT_BAD_USAGE, f"{mod.__name__}: no tickers should be bad usage"
+        # A malformed --tickers-file path is also bad usage, caught before
+        # any ticker reaches run() (and therefore before any browser
+        # launches).
+        assert mod.main(["--tickers-file", "/no/such/file.txt"]) == ow.EXIT_BAD_USAGE, mod.__name__
 
-    # A malformed --tickers-file path is also bad usage, caught before any
-    # ticker reaches run() (and therefore before any browser is launched).
-    assert scraper.main(["--tickers-file", "/no/such/file.txt"]) == ow.EXIT_BAD_USAGE
 
-
-@check("playwright_scraper refuses a ticker path robots.txt disallows, before any network call")
+@check("every engine refuses a ticker path robots.txt disallows, before any network call")
 def _():
-    import playwright_scraper as scraper
     import output_writer as ow
 
     # There is no real disallowed ticker path (robots.txt disallows /api/*,
     # not /stocks/*), so this exercises the guard itself directly instead
     # of relying on a real disallowed ticker existing. Patch the name as
-    # bound inside playwright_scraper's own namespace (a `from x import y`
-    # binds a separate reference there, not an attribute on tipranks_parser).
-    original = scraper.is_allowed
-    scraper.is_allowed = lambda path: False
-    try:
-        assert scraper.main(["--ticker", "AAPL"]) == ow.EXIT_BAD_USAGE
-    finally:
-        scraper.is_allowed = original
+    # bound inside each engine's own namespace (a `from x import y` binds a
+    # separate reference there, not an attribute on tipranks_parser).
+    for mod in ENGINE_MODULES:
+        original = mod.is_allowed
+        mod.is_allowed = lambda path: False
+        try:
+            assert mod.main(["--ticker", "AAPL"]) == ow.EXIT_BAD_USAGE, mod.__name__
+        finally:
+            mod.is_allowed = original
 
 
 # --------------------------------------------------------------------------- #
 # repository hygiene
 # --------------------------------------------------------------------------- #
-@check("no banned wording, no committed credentials")
+@check("no banned wording anywhere in the shipped repo")
 def _():
     banned = [
         "cloud browser",
@@ -278,6 +340,51 @@ def _():
         text = path.read_text(encoding="utf-8", errors="ignore").lower()
         for phrase in banned:
             assert phrase not in text, f"banned phrase {phrase!r} found in {path}"
+
+
+@check("the single credential scanner passes; skip gracefully if it isn't in this checkout")
+def _():
+    # Guarded like the checks below it: a Docker build's COPY list is a
+    # deliberately stripped-down context that never includes .github/, so
+    # this must skip rather than FileNotFoundError there (same reasoning
+    # as the two checks below).
+    scanner = ROOT / ".github" / "ci_checks.py"
+    if not scanner.exists():
+        return
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, str(scanner)], cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, f"ci_checks.py failed:\n{result.stdout}\n{result.stderr}"
+
+
+@check("sample_output.{json,csv} match the TickerRating schema, if they exist yet")
+def _():
+    import csv as csv_mod
+
+    import output_writer as ow
+
+    json_path = ROOT / "sample_output.json"
+    csv_path = ROOT / "sample_output.csv"
+    if not json_path.exists() or not csv_path.exists():
+        return  # part of the doc set, not yet required at every stage
+    rows = json.loads(json_path.read_text(encoding="utf-8"))
+    assert rows and set(rows[0]) == set(ow.RATING_FIELD_NAMES)
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        header = next(csv_mod.reader(f))
+    assert header == ow.RATING_FIELD_NAMES
+
+
+@check("Dockerfile, if present, removes fixtures/test suite and doesn't COPY a .env")
+def _():
+    dockerfile = ROOT / "Dockerfile"
+    if not dockerfile.exists():
+        return
+    text = dockerfile.read_text(encoding="utf-8")
+    assert "smoke_test.py" in text, "Dockerfile should run smoke_test.py at build time"
+    assert re.search(r"rm\s+-rf\s+[^\n]*smoke_test", text), "Dockerfile must strip the test suite from the final layer"
+    assert "COPY .env" not in text, "Dockerfile must never COPY a .env into the image"
 
 
 def main() -> int:

@@ -1,11 +1,18 @@
 # TipRanks Scraper
 
+![tests](https://github.com/2scraper/tipranks-scraper/actions/workflows/tests.yml/badge.svg)
+![canary](https://github.com/2scraper/tipranks-scraper/actions/workflows/canary.yml/badge.svg)
+![python](https://img.shields.io/badge/python-3.9%2B-blue)
+![licence](https://img.shields.io/badge/licence-MIT-green)
+![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-informational)
+![no-credentials](https://img.shields.io/badge/credentials-none%20needed-success)
+
 Scrapes one thing from tipranks.com: a stock ticker's forecast-page
 snapshot — Smart Score, analyst consensus (Buy/Hold/Sell), and price
 target — from the site's free, unauthenticated data. No account, no
-login, no proxy, no captcha solving.
-
-Not yet published anywhere; this is a local, first-pass build.
+login, no proxy, no captcha solving. Three engines (Playwright, Selenium,
+Puppeteer/pyppeteer) with an identical CLI, output schema and exit codes.
+JSON or CSV output.
 
 ## What it reads
 
@@ -33,29 +40,48 @@ Per ticker:
 - `company_name`, `currency`, `source_url`, `scraped_at`.
 
 Any of the consensus/count/price-target fields can be `None` — some
-tickers carry a price target with no buy/hold/sell breakdown at all (a
-real, observed shape, not a parser bug). See `tipranks_parser.py`'s
-module docstring for exactly what's confirmed from a live capture versus
-what's explicitly out of scope.
+tickers carry a price target with no buy/hold/sell breakdown at all, and
+some (confirmed live: GME) carry no analyst data at all — a real,
+observed shape, not a parser bug. See `tipranks_parser.py`'s module
+docstring for exactly what's confirmed from a live capture versus what's
+explicitly out of scope.
 
 ## Install and run
 
+Pick one engine — all three produce identical output:
+
 ```bash
+# Playwright (primary)
 pip install -r requirements-playwright.txt
 playwright install chromium
-
 python3 playwright_scraper.py --ticker AAPL --ticker MSFT --format json --out results.json
+
+# Selenium
+pip install -r requirements-selenium.txt
+python3 selenium_scraper.py --ticker AAPL --format json --out results.json
+
+# Puppeteer (pyppeteer)
+pip install -r requirements-puppeteer.txt
+python3 puppeteer_scraper.py --ticker AAPL --format json --out results.json
 ```
 
-`--tickers-file path.txt` reads one ticker per line instead of repeating
-`--ticker`. `--format csv` writes CSV. `--allow-empty` writes output even
-if every requested ticker came back empty (unknown ticker, etc.) instead
-of the default behavior described below.
+Install each engine's requirements file in its own virtualenv — their
+pins are not all mutually satisfiable in one environment.
+
+Flags, identical across all three:
+
+| Flag | Meaning |
+|---|---|
+| `--ticker SYM` | A ticker to scrape. Repeatable. |
+| `--tickers-file PATH` | One ticker per line, instead of repeating `--ticker`. |
+| `--format json\|csv` | Output format. Default `json`. |
+| `--out PATH` | Output file path. Default `tipranks_results.json`. |
+| `--allow-empty` | Write output even if every requested ticker came back empty. |
+| `--headed` | Launch a visible browser instead of headless (debugging). |
 
 ## Output contract
 
-Same exit codes as the rest of the 2scraper family, since a caller
-scripting more than one of these benefits from one consistent contract:
+Same exit codes across all three engines:
 
 | Exit | Meaning |
 |---|---|
@@ -72,6 +98,10 @@ unless `--allow-empty` is passed, so a failed run never overwrites a
 previous good result. An unknown ticker (real 404/400 from the site) is
 recorded as a *completed* ticker that contributed zero rows, not a
 failure — only a network/navigation error counts against the run.
+
+`diff_runs.py old.json new.json` compares two completed runs: added /
+removed tickers, and per-ticker rating / price-target / Smart Score
+changes.
 
 ## robots.txt
 
@@ -98,24 +128,24 @@ tickers and 30+ requests, all clean 200s, no CAPTCHA, no 429. No
 DataDome/PerimeterX/Akamai/Imperva/Kasada/Arkose Labs signature was found
 either. That's "not observed to challenge this traffic," not "confirmed
 unprotected" — there's no known solvable challenge to wire up here
-because none was ever presented.
+because none was ever presented. See `.github/workflows/canary.yml` for
+how the daily live check treats a possible block from a datacentre IP.
+
+## Engine notes
+
+- **Playwright / Puppeteer** read the real HTTP status from the
+  navigation response to detect an unknown ticker (a real 404/400).
+- **Selenium**: chromedriver doesn't expose that status directly, so
+  `selenium_scraper.py` detects a not-found page via the confirmed real
+  title string (`"Error 404: Page Not Found"`) instead — a documented,
+  named difference, not a silent gap.
 
 ## Testing
 
 `python3 smoke_test.py` — offline, no browser required, runs against
-real captured fixtures in `tests/fixtures/`. No live end-to-end run
-against tipranks.com has been done from an automated Playwright session
-yet (both sandboxes used to build this could not reach the live site or
-download a browser at all); the parser itself is built entirely from
-real payloads captured through a live browser session against the
-current site, and every fixture is a trimmed, real capture — see
-`tipranks_parser.py`'s docstring for the full list of what's confirmed.
-Before relying on this, run it once for real:
-
-```bash
-python3 playwright_scraper.py --ticker AAPL --format json --out /tmp/aapl.json
-cat /tmp/aapl.json
-```
+real captured fixtures in `tests/fixtures/`, and against all three
+engines with no driver installed. See `TESTING.md` for the full coverage
+list and the live-testing checklist.
 
 ## Known limitations
 
@@ -127,5 +157,5 @@ cat /tmp/aapl.json
   string directly instead of a private lookup table.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
-- One engine only (Playwright). No Selenium/Puppeteer parity, no CI, no
-  Docker image yet — this is a first pass, not a published release.
+- No `local_e2e_test.py` — see `TESTING.md` for why a single ticker fetch
+  doesn't need one the way a paginated/proxy-rotating sibling does.

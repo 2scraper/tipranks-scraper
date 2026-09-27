@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tipranks-scraper"
+version = "0.1.0"
+description = "tipranks.com stock ticker forecast scraper (Playwright, Selenium, or Puppeteer) — Smart Score, analyst consensus, price target, free public data, no login"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+playwright = ["playwright>=1.45"]
+selenium = ["selenium>=4.20"]
+puppeteer = ["pyppeteer>=1.0.2"]
+
+[project.urls]
+Homepage = "https://2captcha.com"
+Repository = "https://github.com/2scraper/tipranks-scraper"
+
+[tool.setuptools]
+# A flat collection of standalone scripts, not a package — setuptools
+# cannot guess among this many top-level modules, so they're listed
+# explicitly. Keep this in sync with requirements*.txt by hand; CI only
+# installs requirements.txt directly, so drift here goes unnoticed there.
+py-modules = [
+    "output_writer",
+    "diff_runs",
+    "tipranks_parser",
+    "playwright_scraper",
+    "selenium_scraper",
+    "puppeteer_scraper",
+]
