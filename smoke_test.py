@@ -88,6 +88,7 @@ def _():
     assert rating.buy_count is None
     assert abs(rating.price_target_average - 51.07142857142857) < 1e-9
     assert rating.current_price is None  # no quotes block in this fixture at all
+    assert rating.company_name == "Southwest Airlines"  # confirmed live, not a guess
 
 
 @check("parse_payload degrades gracefully when analystRatings is absent entirely")
