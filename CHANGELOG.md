@@ -6,6 +6,22 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `--executable-path` flag on all three engines, to launch an
+  already-installed Chrome/Chromium instead of an engine's own
+  bundled-browser download.
+
+### Fixed
+
+- Puppeteer engine: confirmed live on a real Apple Silicon Mac that
+  pyppeteer's own bundled Chromium (pinned revision 117.0.5938.0)
+  segfaults on an actual headless run, even though it answers
+  `--version` fine — Playwright's and Selenium's own downloads were
+  unaffected on the same machine. `--executable-path` pointed at a
+  working system Chrome is the fix; documented in
+  `puppeteer_scraper.py`'s module docstring.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. Three engines (Playwright primary, Selenium and

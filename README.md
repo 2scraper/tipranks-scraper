@@ -78,6 +78,7 @@ Flags, identical across all three:
 | `--out PATH` | Output file path. Default `tipranks_results.json`. |
 | `--allow-empty` | Write output even if every requested ticker came back empty. |
 | `--headed` | Launch a visible browser instead of headless (debugging). |
+| `--executable-path PATH` | Use an already-installed Chrome/Chromium instead of this engine's own bundled-browser download. Normally unnecessary — see Engine notes for the one confirmed case where it isn't. |
 
 ## Output contract
 
@@ -123,8 +124,8 @@ not a parser bug.
 On the challenge side: Cloudflare's bot-management fingerprinting script
 loads on every page view, and Google reCAPTCHA's script is also present
 on the page (loaded, not auto-rendered). Neither ever actually
-challenged a request in this project's research — roughly 15 distinct
-tickers and 30+ requests, all clean 200s, no CAPTCHA, no 429. No
+challenged a request in this project's research — roughly 20 distinct
+tickers and 35+ requests, all clean 200s, no CAPTCHA, no 429. No
 DataDome/PerimeterX/Akamai/Imperva/Kasada/Arkose Labs signature was found
 either. That's "not observed to challenge this traffic," not "confirmed
 unprotected" — there's no known solvable challenge to wire up here
@@ -139,6 +140,15 @@ how the daily live check treats a possible block from a datacentre IP.
   `selenium_scraper.py` detects a not-found page via the confirmed real
   title string (`"Error 404: Page Not Found"`) instead — a documented,
   named difference, not a silent gap.
+- **Puppeteer**: confirmed live on a real Apple Silicon Mac — pyppeteer's
+  own bundled Chromium download (pinned at revision 117.0.5938.0)
+  launches but then segfaults on an actual headless run. Playwright's and
+  Selenium's own browser/driver downloads were unaffected on the same
+  machine, so this is specific to that one pinned build, not this site or
+  this repo's code. Fix: `--executable-path /path/to/Chrome` to use an
+  already-installed, working Chrome/Chromium instead (all three engines
+  accept this flag, for CLI parity, though only Puppeteer has needed it
+  so far).
 
 ## Testing
 

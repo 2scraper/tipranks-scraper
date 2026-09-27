@@ -104,16 +104,27 @@ def fetch_one(driver, ticker: str) -> Tuple[Optional[TickerRating], Optional[str
     return rating, None
 
 
-def _make_driver(headless: bool):
+def _make_driver(headless: bool, executable_path: Optional[str] = None):
     options = Options()
     if headless:
         options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    if executable_path:
+        # This is the browser binary (Chrome/Chromium itself), not
+        # chromedriver — Selenium calls that `binary_location`, unlike
+        # Playwright's/pyppeteer's `executable_path`/`executablePath` for
+        # the same concept. Kept for CLI parity with the other two
+        # engines (CLAUDE.md §4); this engine hasn't needed it in this
+        # project's own testing (see puppeteer_scraper.py's module
+        # docstring for the engine that did).
+        options.binary_location = executable_path
     return webdriver.Chrome(options=options)
 
 
-def run(tickers: List[str], *, headless: bool = True) -> Tuple[List[TickerRating], List[str], List[str]]:
+def run(
+    tickers: List[str], *, headless: bool = True, executable_path: Optional[str] = None
+) -> Tuple[List[TickerRating], List[str], List[str]]:
     if webdriver is None:
         raise RuntimeError("selenium is not installed")
 
@@ -121,7 +132,7 @@ def run(tickers: List[str], *, headless: bool = True) -> Tuple[List[TickerRating
     completed: List[str] = []
     failed: List[str] = []
 
-    driver = _make_driver(headless)
+    driver = _make_driver(headless, executable_path)
     try:
         for ticker in tickers:
             rating, error_kind = fetch_one(driver, ticker)
@@ -145,6 +156,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--out", default="tipranks_results.json")
     parser.add_argument("--allow-empty", action="store_true")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument(
+        "--executable-path",
+        default=None,
+        help="Use an already-installed Chrome/Chromium instead of this engine's "
+        "own bundled-browser download (maps to Selenium's binary_location).",
+    )
     return parser.parse_args(argv)
 
 
@@ -173,7 +190,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     started_at = time.time()
     try:
-        ratings, completed, failed = run(tickers, headless=not args.headed)
+        ratings, completed, failed = run(
+            tickers, headless=not args.headed, executable_path=args.executable_path
+        )
     except Exception as exc:
         print(f"crash: {exc}", file=sys.stderr)
         return EXIT_CRASH

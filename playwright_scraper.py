@@ -93,11 +93,18 @@ def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]
     return rating, None
 
 
-def run(tickers: List[str], *, headless: bool = True) -> Tuple[List[TickerRating], List[str], List[str]]:
+def run(
+    tickers: List[str], *, headless: bool = True, executable_path: Optional[str] = None
+) -> Tuple[List[TickerRating], List[str], List[str]]:
     """Returns (ratings, tickers_completed, failed_tickers). A ticker is
     "completed" whether it resolved to a rating or a confirmed
     not-found; only a remote/engine error counts as a failure that could
-    make the run `partial`."""
+    make the run `partial`. `executable_path`, if given, is passed
+    straight to `chromium.launch()` — normally unnecessary (Playwright's
+    own bundled Chromium download has been reliable in this project's
+    testing), but kept for parity with `puppeteer_scraper.py`, where the
+    equivalent flag is a real, documented fix for a confirmed-live
+    engine bug (see that file's module docstring)."""
     if sync_playwright is None:
         raise RuntimeError("playwright is not installed")
 
@@ -106,7 +113,10 @@ def run(tickers: List[str], *, headless: bool = True) -> Tuple[List[TickerRating
     failed: List[str] = []
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless)
+        launch_kwargs = {"headless": headless}
+        if executable_path:
+            launch_kwargs["executable_path"] = executable_path
+        browser = pw.chromium.launch(**launch_kwargs)
         try:
             page = browser.new_page()
             for ticker in tickers:
@@ -147,6 +157,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--headed", action="store_true",
         help="Launch a visible browser instead of headless (debugging).",
     )
+    parser.add_argument(
+        "--executable-path", default=None,
+        help="Use an already-installed Chrome/Chromium instead of this engine's "
+        "own bundled-browser download.",
+    )
     return parser.parse_args(argv)
 
 
@@ -175,7 +190,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     started_at = time.time()
     try:
-        ratings, completed, failed = run(tickers, headless=not args.headed)
+        ratings, completed, failed = run(
+            tickers, headless=not args.headed, executable_path=args.executable_path
+        )
     except Exception as exc:  # a real crash, not a per-ticker failure
         print(f"crash: {exc}", file=sys.stderr)
         return EXIT_CRASH
