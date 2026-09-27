@@ -1,0 +1,30 @@
+# scraper output — machine-specific, stale by the time anyone reads it
+*.json
+*.csv
+!sample_output.json
+!sample_output.csv
+!tests/fixtures/*.json
+tipranks_results.*
+*_debug.html
+*_debug.png
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv*/
+venv/
+env/
+
+# editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# in case a local .env is ever added
+.env
+*.log

@@ -1,0 +1,182 @@
+{
+  "_meta": {
+    "take": 39,
+    "app": "backend",
+    "v": 2,
+    "time": "2026-09-27T09:37:57.653Z"
+  },
+  "models": {
+    "stocks": [
+      {
+        "_id": "ADTN",
+        "analystRatings": {
+          "all": {
+            "priceTarget": {
+              "value": 14.666666666666666,
+              "upside": 1.057035998129972
+            }
+          }
+        },
+        "company": {
+          "name": "Adtran"
+        }
+      },
+      {
+        "_id": "AEHR",
+        "analystRatings": {
+          "all": {
+            "priceTarget": {
+              "value": 128,
+              "upside": 0.22617108918478782
+            }
+          }
+        },
+        "company": {
+          "name": "Aehr Test Systems"
+        }
+      },
+      {
+        "_id": "BELFB",
+        "company": {
+          "name": "Bel Fuse Inc"
+        },
+        "analystRatings": {
+          "all": {
+            "priceTarget": {
+              "value": 330.1666666666667,
+              "upside": 0.30660756922184096
+            }
+          }
+        }
+      },
+      {
+        "_id": "ONTO",
+        "analystRatings": {
+          "all": {
+            "priceTarget": {
+              "value": 390,
+              "upside": 0.35586149353358365
+            }
+          }
+        },
+        "company": {
+          "name": "Onto Innovation"
+        }
+      },
+      {
+        "_id": "SAP",
+        "analystRatings": {
+          "all": {
+            "priceTarget": {
+              "value": 229.8,
+              "upside": 0.09075374976267325
+            }
+          }
+        },
+        "company": {
+          "name": "SAP SE"
+        }
+      },
+      {
+        "_id": "AAPL",
+        "analystRatings": {
+          "all": {
+            "buy": 15,
+            "hold": 11,
+            "sell": 4,
+            "total": 30,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 334.8982608695652,
+              "upside": -0.01809522716871903
+            },
+            "highPriceTarget": 400,
+            "lowPriceTarget": 245
+          },
+          "best": {
+            "buy": 12,
+            "hold": 8,
+            "sell": 3,
+            "total": 23,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 334.8623529411765,
+              "upside": -0.018200507399724397
+            },
+            "highPriceTarget": 400,
+            "lowPriceTarget": 245
+          },
+          "lastRating": {
+            "date": "2026-09-23T00:00:00.000Z"
+          },
+          "sevenDaysConsensus": {
+            "buy": 3,
+            "hold": 1,
+            "sell": 0,
+            "total": 4,
+            "id": "strongBuy",
+            "enumId": 5,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 348.6666666666667,
+              "upside": 0.022273042679411853
+            },
+            "highPriceTarget": 380,
+            "lowPriceTarget": 296
+          },
+          "thirtyDaysConsensus": {
+            "buy": 11,
+            "hold": 6,
+            "sell": 3,
+            "total": 20,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 333.39176470588234,
+              "upside": -0.022512197772064386
+            },
+            "highPriceTarget": 400,
+            "lowPriceTarget": 245
+          }
+        },
+        "company": {
+          "name": "Apple"
+        },
+        "smartScore": {
+          "update": "2026-09-27T00:00:00.000Z",
+          "value": 7
+        },
+        "quotes": {
+          "pre": {
+            "change": {
+              "percent": -0.000481701595245709,
+              "amount": -0.1540000000000532
+            },
+            "price": 319.546,
+            "lastTrade": "2026-08-31T13:30:00.000Z",
+            "volume": 741236
+          },
+          "realTime": true,
+          "currency": "USD",
+          "open": {
+            "lastTrade": "2026-08-31T14:10:19.000Z",
+            "change": {
+              "percent": -0.01110416015014097,
+              "amount": -3.550000000000068
+            },
+            "price": 319.97,
+            "ask": 0,
+            "bid": 0,
+            "volume": 4205609
+          },
+          "tradeTime": "open"
+        }
+      }
+    ]
+  }
+}

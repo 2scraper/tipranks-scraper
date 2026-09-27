@@ -1,0 +1,4 @@
+# Family-shared base requirements. Currently empty: this repo's only
+# dependency is the engine driver itself (requirements-playwright.txt),
+# since the free/public ticker-page data needs no proxy, captcha-solving,
+# or fingerprint client.
