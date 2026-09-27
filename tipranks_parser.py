@@ -39,9 +39,15 @@ CONFIRMED, from a real captured session:
 - A scope's consensus fields (`buy`/`hold`/`sell`/`total`/`id`/`enumId`)
   can be ABSENT even when `priceTarget` is present — confirmed live for
   LUV and T, both of which returned only `{"priceTarget": {...}}` under
-  `all` with no buy/hold/sell breakdown at all. This parser treats every
-  one of these fields as independently optional; it never assumes that
-  seeing `priceTarget` implies seeing a consensus label.
+  `all` with no buy/hold/sell breakdown at all. `analystRatings` itself
+  (the whole `all`/`best`/*Consensus block) can be missing entirely too —
+  confirmed live for GME, whose record had only `smartScore`, nothing
+  under `analystRatings` at all. This parser treats every one of these
+  fields as independently optional at every level; it never assumes that
+  seeing one implies seeing another.
+- Ticker symbols containing a dot resolve correctly —
+  `/stocks/brk.b/stock-analysis` (Berkshire Hathaway class B) is
+  confirmed live, real data, not a 404. Untested: a `-` in the symbol.
 - `smartScore` (`{"update": <date>, "value": <int>}`) is real and
   confirmed (AAPL: 7, MSFT: 9, INTC: 10) but is NOT present on every
   payload — it was absent from the AAPL `stock-forecast/payload.json`
@@ -71,16 +77,34 @@ CONFIRMED, from a real captured session:
   text itself (longest-match-wins, the documented robots.txt semantics),
   not from a hardcoded conclusion, so a refreshed capture is
   automatically re-checked.
-- A same-origin fetch of the payload after a normal page load returned
-  clean 200s with real data in every capture this session, with no
-  interactive CAPTCHA/challenge page shown and no `cf_clearance` cookie
-  present. A Cloudflare bot-management script (`/cdn-cgi/challenge-
-  platform/...`) does load and does POST a fingerprint on every page
-  view, which means Cloudflare is watching traffic here, even though it
-  never blocked a normal browser session in this sample. This is stated
-  as "not observed to challenge a normal visit," not "confirmed
-  unprotected" — unlike g2.com's DataDome, there is no known solvable
-  challenge type to wire up here because none was ever presented.
+- The edge stack is confirmed from real response headers to be TWO
+  layers, not one: **Fastly** in front (`via: 1.1 varnish`,
+  `x-served-by`, `surrogate-control`/`x-cache` headers — the HTML page is
+  cached `max-age=86400`, the `payload.json` endpoint `max-age=300`, both
+  with `stale-while-revalidate=86400`), and **Cloudflare** behind/beside
+  it (`server: cloudflare`, `cf-ray`, `cf-cache-status`). The Fastly
+  cache TTLs are the direct, confirmed explanation for the "quote can lag
+  the rendered price" note above — a live quote sitting behind a 5-minute
+  (worst case ~24h, on `stale-while-revalidate`) edge cache is expected
+  staleness, not a parser bug.
+- On Cloudflare's side: a bot-management fingerprinting script
+  (`/cdn-cgi/challenge-platform/...`) loads and POSTs a fingerprint on
+  every page view, and Google reCAPTCHA's script
+  (`recaptcha.net/recaptcha/api.js?render=explicit`) is also loaded on
+  the page (present, `render=explicit` — i.e. loaded ready to render on
+  demand, not auto-rendered) — so at least two challenge mechanisms are
+  present in the page's own JS, even though neither ever actually
+  rendered a challenge in this session. No Cloudflare Turnstile script,
+  no hCaptcha, and no known DataDome/PerimeterX/Akamai
+  Bot-Manager/Imperva/Kasada/Arkose Labs cookie or script was found in
+  any capture. Across roughly 15 distinct tickers and 30+ page/payload
+  requests this session (spread across the initial research and a later
+  follow-up batch — TSLA, GOOGL, BRK.B, GME, CVNA among them), every
+  single one returned a clean 200 with real data; none triggered a
+  visible challenge, a CAPTCHA, or a 429. This is stated as "not observed
+  to challenge this session's traffic," not "confirmed unprotected" —
+  unlike g2.com's DataDome, there is no known solvable challenge type to
+  wire up here, because none was ever presented to solve.
 
 NOT confirmed / explicitly out of scope:
 
@@ -91,7 +115,8 @@ NOT confirmed / explicitly out of scope:
   never observed.
 - Non-US-listed tickers, ADRs, or any currency other than USD — every
   ticker sampled this session was USD-denominated.
-- Ticker symbols containing `.` or `-` (e.g. share classes) — untested.
+- A `-` in a ticker symbol — untested (a `.`, e.g. `BRK.B`, is confirmed
+  live above).
 """
 from __future__ import annotations
 
