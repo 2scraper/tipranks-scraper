@@ -317,6 +317,18 @@ def _():
             mod.is_allowed = original
 
 
+@check("every engine accepts --executable-path (a real fix for a confirmed-live "
+       "puppeteer bug, kept for CLI parity across all three per CLAUDE.md §4)")
+def _():
+    for mod in ENGINE_MODULES:
+        args = mod.parse_args(["--ticker", "AAPL", "--executable-path", "/some/chrome"])
+        assert args.executable_path == "/some/chrome", mod.__name__
+        # Default stays None — this is an opt-in escape hatch, not a
+        # required flag; every earlier check in this file calls main()
+        # without it and must keep working unchanged.
+        assert mod.parse_args(["--ticker", "AAPL"]).executable_path is None, mod.__name__
+
+
 # --------------------------------------------------------------------------- #
 # repository hygiene
 # --------------------------------------------------------------------------- #
