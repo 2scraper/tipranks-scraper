@@ -62,11 +62,23 @@ _NOT_SOURCE_DIR = re.compile(r"(^|/)(\.venv[^/]*|venv|env|node_modules|__pycache
 
 
 def repository_files() -> list[str]:
-    result = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        cwd=ROOT, check=True, capture_output=True,
-    )
-    paths = [p.decode("utf-8", "surrogateescape") for p in result.stdout.split(b"\0") if p]
+    """`git ls-files` when ROOT is a real git working tree (true in CI's
+    `actions/checkout`, and in any real clone) — a plain filesystem walk
+    as a fallback otherwise (a file-only sync of this repo with no .git
+    directory, or an extracted release tarball), so the scanner works
+    either way rather than crashing when .git is absent."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=ROOT, check=True, capture_output=True,
+        )
+        paths = [p.decode("utf-8", "surrogateescape") for p in result.stdout.split(b"\0") if p]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        paths = [
+            str(p.relative_to(ROOT))
+            for p in ROOT.rglob("*")
+            if p.is_file()
+        ]
     return [p for p in paths if not _NOT_SOURCE_DIR.search(p)]
 
 
