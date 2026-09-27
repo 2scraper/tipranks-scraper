@@ -88,6 +88,21 @@ def _():
     assert rating.current_price is None  # no quotes block in this fixture at all
 
 
+@check("parse_payload degrades gracefully when analystRatings is absent entirely")
+def _():
+    from tipranks_parser import parse_payload
+
+    payload = _load_fixture("tipranks_gme_no_ratings.json")
+    rating = parse_payload(
+        payload, "gme", source_url="https://example/", scraped_at="2026-09-27T00:00:00Z"
+    )
+    assert rating is not None
+    assert rating.smart_score == 8
+    assert rating.consensus_rating_id is None
+    assert rating.price_target_average is None
+    assert rating.current_price is None
+
+
 @check("parse_payload returns None for a ticker not present in the payload")
 def _():
     from tipranks_parser import parse_payload
@@ -126,6 +141,9 @@ def _():
 
     assert ticker_page_url("AAPL") == "https://www.tipranks.com/stocks/aapl/stock-analysis"
     assert ticker_payload_url("AAPL").endswith("/stocks/aapl/stock-analysis/payload.json")
+    # A share-class ticker with a dot resolves live (confirmed: BRK.B) —
+    # the URL builder must not mangle it.
+    assert ticker_page_url("BRK.B") == "https://www.tipranks.com/stocks/brk.b/stock-analysis"
 
 
 # --------------------------------------------------------------------------- #

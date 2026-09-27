@@ -81,6 +81,25 @@ unrelated to this repo). `tipranks_parser.is_allowed()` re-checks this
 from the captured robots.txt text itself at runtime, not from a
 hardcoded conclusion.
 
+## What's actually in front of the site
+
+Two edge layers, confirmed from real response headers: **Fastly**
+(caching — the HTML page is edge-cached up to 24h, `payload.json` up to
+5 minutes) sitting with **Cloudflare** (`server: cloudflare`, `cf-ray`).
+The Fastly cache is the confirmed reason a quote can lag the page's own
+rendered price (see `current_price`'s caveat above) — it's edge caching,
+not a parser bug.
+
+On the challenge side: Cloudflare's bot-management fingerprinting script
+loads on every page view, and Google reCAPTCHA's script is also present
+on the page (loaded, not auto-rendered). Neither ever actually
+challenged a request in this project's research — roughly 15 distinct
+tickers and 30+ requests, all clean 200s, no CAPTCHA, no 429. No
+DataDome/PerimeterX/Akamai/Imperva/Kasada/Arkose Labs signature was found
+either. That's "not observed to challenge this traffic," not "confirmed
+unprotected" — there's no known solvable challenge to wire up here
+because none was ever presented.
+
 ## Testing
 
 `python3 smoke_test.py` — offline, no browser required, runs against
@@ -106,6 +125,7 @@ cat /tmp/aapl.json
 - `enumId` 1 (presumably `"strongSell"`) was never observed live; the
   parser never hardcodes a guess for it — it reads the site's own label
   string directly instead of a private lookup table.
-- Untested: non-USD tickers, and tickers with `.`/`-` in the symbol.
+- Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
+  `BRK.B`, is confirmed live).
 - One engine only (Playwright). No Selenium/Puppeteer parity, no CI, no
   Docker image yet — this is a first pass, not a published release.

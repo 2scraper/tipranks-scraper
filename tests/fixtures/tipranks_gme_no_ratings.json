@@ -1,0 +1,19 @@
+{
+  "_meta": {
+    "take": 39,
+    "app": "backend",
+    "v": 2,
+    "time": "2026-09-27T09:37:57.653Z"
+  },
+  "models": {
+    "stocks": [
+      {
+        "_id": "GME",
+        "smartScore": {
+          "update": "2026-09-25T00:00:00.000Z",
+          "value": 8
+        }
+      }
+    ]
+  }
+}
