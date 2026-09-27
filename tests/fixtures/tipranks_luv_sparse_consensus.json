@@ -9,6 +9,9 @@
     "stocks": [
       {
         "_id": "LUV",
+        "company": {
+          "name": "Southwest Airlines"
+        },
         "analystRatings": {
           "all": {
             "priceTarget": {

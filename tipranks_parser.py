@@ -44,10 +44,25 @@ CONFIRMED, from a real captured session:
   confirmed live for GME, whose record had only `smartScore`, nothing
   under `analystRatings` at all. This parser treats every one of these
   fields as independently optional at every level; it never assumes that
-  seeing one implies seeing another.
+  seeing one implies seeing another. LUV's `company.name` is confirmed
+  live to be "Southwest Airlines" — an earlier draft of this repo's LUV
+  test fixture once carried that same string as a guess from general
+  knowledge rather than a real capture, and was caught and stripped
+  before it shipped; it's now in the fixture again, this time because a
+  live capture actually returned it.
 - Ticker symbols containing a dot resolve correctly —
   `/stocks/brk.b/stock-analysis` (Berkshire Hathaway class B) is
-  confirmed live, real data, not a 404. Untested: a `-` in the symbol.
+  confirmed live, real data, not a 404 — including a live BRK.B capture
+  with only 2 covering analysts, a real (if unusual) number for a
+  holding company, not a parser artifact. Untested: a `-` in the symbol.
+- All of the above, plus CSV output, `--tickers-file`, the zero-result
+  exit code with and without `--allow-empty` (writes nothing without the
+  flag, an empty array with it — same `EXIT_ZERO_PRODUCTS` either way),
+  and `diff_runs.py` against two real runs, were each independently
+  confirmed by running the actual shipped `playwright_scraper.py` CLI
+  (not a harness calling its internals) from a real machine with real
+  internet access, live against tipranks.com. Every one matched its
+  documented behavior exactly.
 - `smartScore` (`{"update": <date>, "value": <int>}`) is real and
   confirmed (AAPL: 7, MSFT: 9, INTC: 10) but is NOT present on every
   payload — it was absent from the AAPL `stock-forecast/payload.json`
