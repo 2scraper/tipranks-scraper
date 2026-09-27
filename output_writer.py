@@ -132,10 +132,35 @@ def finish_run(
     remote_api_error > blocked > zero_products > partial > complete,
     decided once, independent of --allow-empty. A zero-result outcome
     writes neither file unless the caller passed --allow-empty; a failed
-    run never gets a sidecar."""
+    run never gets a sidecar.
+
+    `remote_api_error` is auto-derived (OR'd with whatever the caller
+    passed) from `tickers_completed`/`failed_tickers`, the same way
+    `partial` already was — a run where every single requested ticker
+    failed and NONE completed (not even as a confirmed not-found) is a
+    total remote/network failure, not an empty result, regardless of
+    whether any engine bothered to compute that itself. Found live: all
+    three engines were passing `remote_api_error=False` unconditionally,
+    which made a total network outage indistinguishable from the site
+    legitimately returning nothing (both landed on EXIT_ZERO_PRODUCTS) —
+    fixed here, once, rather than in three call sites that can drift.
+
+    That auto-derivation is deliberately suppressed when the caller also
+    passed `blocked=True`: a total failure where every ticker was
+    specifically blocked (a real 403/429, not a generic timeout) should
+    surface as `blocked`, not `remote_api_error` — those mean different
+    things to a caller (a WAF/rate-limit rejected you vs. the network or
+    engine itself broke) and the precedence table above already ranks
+    `remote_api_error` over `blocked` for when a caller has genuinely
+    confirmed BOTH; treating every all-blocked run as remote_api_error
+    instead would make `blocked` unreachable in the single most realistic
+    case for it (a block usually takes out the whole run, not a cherry-
+    picked subset of tickers)."""
     failed_tickers = failed_tickers or []
     partial = bool(failed_tickers) and bool(tickers_completed)
     zero_products = len(ratings) == 0
+    total_failure = bool(failed_tickers) and not tickers_completed
+    remote_api_error = remote_api_error or (total_failure and not blocked)
 
     if remote_api_error:
         status, exit_code = "remote_api_error", EXIT_REMOTE_API_ERROR

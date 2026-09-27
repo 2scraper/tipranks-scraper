@@ -89,10 +89,18 @@ Same exit codes across all three engines:
 | 0 | complete |
 | 1 | crashed |
 | 2 | bad usage (no tickers given, robots.txt disallows a path, ...) |
-| 3 | blocked |
+| 3 | blocked (a real 403/429 — never observed live against this site, see below) |
 | 4 | zero results |
 | 5 | remote API error (navigation/network failure) |
 | 6 | partial (some tickers failed, others succeeded) |
+
+A run where every requested ticker fails and none complete is `5`
+(remote API error) unless every one of those failures was specifically a
+403/429, in which case it's `3` (blocked) — a total block and a total
+network outage are different situations for a caller (site actively
+rejected you vs. the network or engine itself broke), and both are
+distinct from `4`, where the site was reachable and simply had nothing to
+return for a ticker (a confirmed 404/400).
 
 A zero-result run writes neither `--out` nor its `.meta.json` sidecar
 unless `--allow-empty` is passed, so a failed run never overwrites a

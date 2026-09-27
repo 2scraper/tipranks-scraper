@@ -69,7 +69,9 @@ def _now_iso() -> str:
 
 async def fetch_one_async(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]:
     """Same contract as playwright_scraper.fetch_one: (rating_or_None,
-    error_kind), never raises."""
+    error_kind), never raises. error_kind "blocked" (403/429) is checked
+    before "not_found" (404/400), same statuses playwright_scraper.py
+    checks for the same reason — see that file's module comment."""
     page_url = ticker_page_url(ticker)
     payload_url = ticker_payload_url(ticker)
 
@@ -78,6 +80,8 @@ async def fetch_one_async(page, ticker: str) -> Tuple[Optional[TickerRating], Op
     except Exception:
         return None, "remote_api_error"
 
+    if response is not None and response.status in (403, 429):
+        return None, "blocked"
     if response is not None and response.status in (404, 400):
         return None, "not_found"
 
@@ -88,6 +92,8 @@ async def fetch_one_async(page, ticker: str) -> Tuple[Optional[TickerRating], Op
     except Exception:
         return None, "remote_api_error"
 
+    if isinstance(payload, dict) and payload.get("__status") in (403, 429):
+        return None, "blocked"
     if isinstance(payload, dict) and payload.get("__status") in (404, 400):
         return None, "not_found"
     if not isinstance(payload, dict) or "models" not in payload:
@@ -101,13 +107,16 @@ async def fetch_one_async(page, ticker: str) -> Tuple[Optional[TickerRating], Op
 
 async def run_async(
     tickers: List[str], *, headless: bool = True, executable_path: Optional[str] = None
-) -> Tuple[List[TickerRating], List[str], List[str]]:
+) -> Tuple[List[TickerRating], List[str], List[str], List[str]]:
+    """Returns (ratings, tickers_completed, failed_tickers,
+    blocked_tickers) — same contract as playwright_scraper.run()."""
     if pyppeteer_launch is None:
         raise RuntimeError("pyppeteer is not installed")
 
     ratings: List[TickerRating] = []
     completed: List[str] = []
     failed: List[str] = []
+    blocked: List[str] = []
 
     launch_kwargs = {"headless": headless, "args": ["--no-sandbox"]}
     if executable_path:
@@ -121,6 +130,10 @@ async def run_async(
         page = await browser.newPage()
         for ticker in tickers:
             rating, error_kind = await fetch_one_async(page, ticker)
+            if error_kind == "blocked":
+                failed.append(ticker)
+                blocked.append(ticker)
+                continue
             if error_kind == "remote_api_error":
                 failed.append(ticker)
                 continue
@@ -130,12 +143,12 @@ async def run_async(
     finally:
         await browser.close()
 
-    return ratings, completed, failed
+    return ratings, completed, failed, blocked
 
 
 def run(
     tickers: List[str], *, headless: bool = True, executable_path: Optional[str] = None
-) -> Tuple[List[TickerRating], List[str], List[str]]:
+) -> Tuple[List[TickerRating], List[str], List[str], List[str]]:
     return asyncio.get_event_loop().run_until_complete(
         run_async(tickers, headless=headless, executable_path=executable_path)
     )
@@ -184,7 +197,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     started_at = time.time()
     try:
-        ratings, completed, failed = run(
+        ratings, completed, failed, blocked_tickers = run(
             tickers, headless=not args.headed, executable_path=args.executable_path
         )
     except Exception as exc:
@@ -199,8 +212,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         tickers_requested=tickers,
         tickers_completed=completed,
         failed_tickers=failed,
-        blocked=False,
-        remote_api_error=False,
+        blocked=bool(blocked_tickers),
+        remote_api_error=False,  # total-failure case now auto-derived in finish_run()
         allow_empty=args.allow_empty,
         started_at=started_at,
     )

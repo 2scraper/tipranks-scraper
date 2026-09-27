@@ -28,6 +28,22 @@ works against tipranks.com right now."
   (`remote_api_error > blocked > empty > partial > complete`), and that a
   zero-result run without `--allow-empty` writes neither the output file
   nor its `.meta.json` sidecar.
+- All three engines actually reach `EXIT_REMOTE_API_ERROR` (5) when every
+  requested ticker fails and none complete, and `EXIT_BLOCKED` (3) when
+  every ticker was specifically blocked (a real 403/429) — both by
+  injecting a fake `run()` per engine, not just trusting the exit codes
+  are named correctly. Found live: this used to be broken — all three
+  engines passed `remote_api_error=False`/`blocked=False`
+  unconditionally, so a total network outage was indistinguishable from
+  the site legitimately returning nothing (both landed on
+  `EXIT_ZERO_PRODUCTS`), and a real block could never surface as
+  anything but a generic failure. Fixed once in
+  `output_writer.finish_run()` (auto-derives `remote_api_error` from
+  `tickers_completed`/`failed_tickers`, the same way it already derived
+  `partial`) plus a real 403/429 check in each engine's own fetch
+  function. A genuine partial run (some tickers succeed, others fail)
+  is separately checked to confirm it still reaches `EXIT_PARTIAL` and
+  isn't swallowed by either fix above.
 - `write_json`/`write_csv` round-trip the full `TickerRating` schema.
 - `diff_runs.py` against two real `finish_run()` outputs correctly
   reports added/removed/rating-changed/price-target-changed/smart-score-changed.
@@ -50,6 +66,14 @@ ticker fetch has no rotation/pagination state to get wrong). The engine
 scripts' actual browser-automation code (`page.goto` + the in-page
 `fetch()` of `payload.json`, per engine) is only proven by a real live
 run, below — `smoke_test.py` never launches a browser at all.
+
+The `EXIT_BLOCKED` path specifically: the 403/429 check in each engine's
+own fetch function has never fired against a real response — this site
+has never blocked a single one of this project's requests (see
+`tipranks_parser.py`'s module docstring for the tally). `smoke_test.py`
+proves the wiring works by injecting a fake blocked result, not by
+provoking a real block, because there's no known way to reliably provoke
+one on demand.
 
 ## Live testing checklist
 
