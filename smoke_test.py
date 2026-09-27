@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -149,6 +150,37 @@ def _():
     assert ticker_page_url("BRK.B") == "https://www.tipranks.com/stocks/brk.b/stock-analysis"
 
 
+@check("ticker normalization strips harmless whitespace and rejects URL/path injection")
+def _():
+    from tipranks_parser import normalize_ticker, ticker_page_url
+
+    assert normalize_ticker("  brk.b  ") == "BRK.B"
+    assert normalize_ticker("BRK-B") == "BRK-B"
+    for value in ("../../api/users", "AAPL?x=1", "/AAPL", "..", "AAPL/B"):
+        try:
+            ticker_page_url(value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe ticker accepted: {value!r}")
+
+
+@check("parse_payload tolerates malformed optional structures without crashing")
+def _():
+    from tipranks_parser import parse_payload
+
+    assert parse_payload(
+        {"models": {"stocks": [None]}}, "AAPL", source_url="x", scraped_at="x"
+    ) is None
+    rating = parse_payload(
+        {"models": {"stocks": [{"_id": "AAPL", "analystRatings": "changed", "quotes": []}]}},
+        "AAPL", source_url="x", scraped_at="x",
+    )
+    assert rating is not None
+    assert rating.consensus_rating_id is None
+    assert rating.current_price is None
+
+
 # --------------------------------------------------------------------------- #
 # output_writer.py
 # --------------------------------------------------------------------------- #
@@ -237,6 +269,29 @@ def _():
     assert [r["ticker"] for r in result["rating_changed"]] == ["AAPL"]
     assert [r["ticker"] for r in result["price_target_changed"]] == ["AAPL"]
     assert [r["ticker"] for r in result["smart_score_changed"]] == ["AAPL"]
+
+
+@check("diff_runs rejects an output paired with a stale checksummed sidecar")
+def _():
+    import output_writer as ow
+    import diff_runs
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = str(Path(tmp) / "run.json")
+        ow.finish_run(
+            ratings=[_dummy_rating()], out_path=path, fmt="json", engine="playwright",
+            tickers_requested=["AAPL"], tickers_completed=["AAPL"], failed_tickers=[],
+            blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+        )
+        meta = json.loads(Path(path + ".meta.json").read_text())
+        assert len(meta["output_sha256"]) == 64
+        Path(path).write_text("[]", encoding="utf-8")
+        try:
+            diff_runs.diff(path, path)
+        except SystemExit as exc:
+            assert "checksum mismatch" in str(exc)
+        else:
+            raise AssertionError("stale sidecar was accepted")
 
 
 @check("write_json / write_csv round-trip the full TickerRating schema")
@@ -382,10 +437,43 @@ def _():
         original = mod.run
         mod.run = fake_run_partial
         try:
-            code = mod.main(["--ticker", "AAPL", "--ticker", "MSFT", "--allow-empty"])
-            assert code == ow.EXIT_PARTIAL, f"{mod.__name__}: got {code}"
+            with tempfile.TemporaryDirectory() as tmp:
+                out = str(Path(tmp) / "partial.json")
+                code = mod.main([
+                    "--ticker", "AAPL", "--ticker", "MSFT",
+                    "--allow-empty", "--out", out,
+                ])
+                assert code == ow.EXIT_PARTIAL, f"{mod.__name__}: got {code}"
         finally:
             mod.run = original
+
+
+@check("a total mixed block + network failure follows remote_api_error precedence")
+def _():
+    import output_writer as ow
+
+    def fake_run_mixed(tickers, **kwargs):
+        return [], [], list(tickers), [tickers[0]]
+
+    for mod in ENGINE_MODULES:
+        original = mod.run
+        mod.run = fake_run_mixed
+        try:
+            code = mod.main(["--ticker", "AAPL", "--ticker", "MSFT"])
+            assert code == ow.EXIT_REMOTE_API_ERROR, f"{mod.__name__}: got {code}"
+        finally:
+            mod.run = original
+
+
+@check("playwright navigation errors degrade to a per-ticker remote error")
+def _():
+    class BrokenPage:
+        def goto(self, *args, **kwargs):
+            raise RuntimeError("ERR_NAME_NOT_RESOLVED")
+
+    rating, error = playwright_scraper.fetch_one(BrokenPage(), "AAPL")
+    assert rating is None
+    assert error == "remote_api_error"
 
 
 # --------------------------------------------------------------------------- #
@@ -431,6 +519,28 @@ def _():
     assert result.returncode == 0, f"ci_checks.py failed:\n{result.stdout}\n{result.stderr}"
 
 
+@check("credential scanner recognizes quoted and unquoted secret assignments")
+def _():
+    import importlib.util
+
+    scanner = ROOT / ".github" / "ci_checks.py"
+    if not scanner.exists():
+        return
+    spec = importlib.util.spec_from_file_location("tipranks_ci_checks", scanner)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    oauth_name = "CLAUDE_CODE" + "_OAUTH_TOKEN"
+    api_name = "api" + "_key"
+    value = "realvalue" + "123456"
+    for line in (
+        f'{oauth_name}="{value}"',
+        f"{oauth_name}={value}",
+        f"{api_name}: {value}",
+    ):
+        assert module.SECRET_ASSIGNMENT.search(line), line
+
+
 @check("sample_output.{json,csv} match the TickerRating schema, if they exist yet")
 def _():
     import csv as csv_mod
@@ -446,6 +556,15 @@ def _():
     with open(csv_path, newline="", encoding="utf-8") as f:
         header = next(csv_mod.reader(f))
     assert header == ow.RATING_FIELD_NAMES
+
+
+@check("pyproject version has a matching released changelog section")
+def _():
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.M)
+    assert match, "pyproject.toml has no project version"
+    assert f"## [{match.group(1)}]" in changelog
 
 
 @check("Dockerfile, if present, removes fixtures/test suite and doesn't COPY a .env")

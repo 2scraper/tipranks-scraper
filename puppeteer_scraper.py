@@ -36,10 +36,10 @@ try:
 except ImportError:  # pragma: no cover - exercised by smoke_test.py with no engine installed
     pyppeteer_launch = None
 
-import output_writer
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run
 from tipranks_parser import (
     is_allowed,
+    normalize_ticker,
     parse_payload,
     ticker_page_url,
     ticker_payload_url,
@@ -99,7 +99,10 @@ async def fetch_one_async(page, ticker: str) -> Tuple[Optional[TickerRating], Op
     if not isinstance(payload, dict) or "models" not in payload:
         return None, "remote_api_error"
 
-    rating = parse_payload(payload, ticker, source_url=page_url, scraped_at=_now_iso())
+    try:
+        rating = parse_payload(payload, ticker, source_url=page_url, scraped_at=_now_iso())
+    except (TypeError, ValueError, AttributeError):
+        return None, "remote_api_error"
     if rating is None:
         return None, "not_found"
     return rating, None
@@ -184,7 +187,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"error: could not read --tickers-file: {exc}", file=sys.stderr)
             return EXIT_BAD_USAGE
 
-    tickers = list(dict.fromkeys(t.upper() for t in tickers if t.strip()))
+    try:
+        tickers = list(dict.fromkeys(normalize_ticker(t) for t in tickers if t.strip()))
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_BAD_USAGE
     if not tickers:
         print("error: no tickers given (use --ticker or --tickers-file)", file=sys.stderr)
         return EXIT_BAD_USAGE
@@ -213,7 +220,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         tickers_completed=completed,
         failed_tickers=failed,
         blocked=bool(blocked_tickers),
-        remote_api_error=False,  # total-failure case now auto-derived in finish_run()
+        remote_api_error=(
+            bool(set(failed) - set(blocked_tickers)) and not completed
+        ),
         allow_empty=args.allow_empty,
         started_at=started_at,
     )

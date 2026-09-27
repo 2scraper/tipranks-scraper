@@ -14,6 +14,7 @@ a ticker can change on one axis without the others.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -38,6 +39,20 @@ def _load_rows(run_path: str) -> List[dict]:
     raise SystemExit(f"error: unsupported run file extension: {path.suffix}")
 
 
+def _verify_output_hash(run_path: str, meta: dict) -> None:
+    """Reject a new output paired with a stale sidecar after an interrupted write."""
+    expected = meta.get("output_sha256")
+    if not expected:  # Backward compatibility for runs created before v0.2.0.
+        return
+    path = Path(run_path)
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != expected:
+        raise SystemExit(
+            f"error: output/sidecar checksum mismatch for {run_path}; "
+            "the run may have been interrupted while saving"
+        )
+
+
 def _index_by_ticker(rows: List[dict]) -> Dict[str, dict]:
     out: Dict[str, dict] = {}
     for row in rows:
@@ -60,6 +75,8 @@ def _as_float(value) -> object:
 
 def diff(old_path: str, new_path: str) -> dict:
     old_meta, new_meta = _load_meta(old_path), _load_meta(new_path)
+    _verify_output_hash(old_path, old_meta)
+    _verify_output_hash(new_path, new_meta)
     for label, meta in (("old", old_meta), ("new", new_meta)):
         if meta.get("status") != "complete":
             raise SystemExit(

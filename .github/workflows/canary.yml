@@ -5,21 +5,18 @@ on:
     - cron: "23 7 * * *"   # once daily; avoid :00 so it doesn't pile up with everyone else's
   workflow_dispatch: {}     # dispatch manually at least once before trusting the badge
 
+permissions:
+  contents: read
+
 jobs:
   # A real run against real tickers. Unlike this project's siblings, this
   # one needs no secret at all — the ticker page is free, public data
   # (see SECURITY.md) — so this canary runs unconditionally rather than
   # skipping behind an optional-secret gate.
   #
-  # It is NOT strict the way a sibling's proxy-gated canary is, for one
-  # honest reason stated in tipranks_parser.py's module docstring: this
-  # project's own research never saw a live block, but that was from a
-  # residential/desktop browsing session, not a bare GitHub-hosted
-  # runner's datacentre IP — Cloudflare treating those differently is a
-  # real, plausible, undocumented risk, not a hypothetical. So `blocked`
-  # and `remote_api_error` are reported clearly but do NOT fail the job;
-  # only a crash or a malformed result does. If this canary starts
-  # reporting real, complete data reliably over time, tighten it.
+  # This is an availability canary: a green badge means the workflow
+  # obtained real data. A datacentre-IP block is useful diagnostic context,
+  # but it is still an unavailable scraper and therefore fails this job.
   canary-live:
     runs-on: ubuntu-latest
     steps:
@@ -31,6 +28,19 @@ jobs:
           pip install -r requirements-playwright.txt
           playwright install --with-deps chromium
 
+      - name: Verify the captured robots rules are still current
+        run: |
+          curl --fail --silent --show-error https://www.tipranks.com/robots.txt -o /tmp/tipranks-robots.txt
+          python3 -c "
+          from pathlib import Path
+          from tipranks_parser import ROBOTS_TXT_CAPTURE, parse_robots_rules
+          captured = parse_robots_rules(ROBOTS_TXT_CAPTURE)
+          live = parse_robots_rules(Path('/tmp/tipranks-robots.txt').read_text())
+          if captured != live:
+              raise SystemExit('robots.txt Allow/Disallow rules changed; refresh and review the capture')
+          print('robots.txt rules match the reviewed capture')
+          "
+
       - name: Scrape a handful of real tickers
         run: |
           set +e
@@ -39,7 +49,7 @@ jobs:
             --format json --out canary_out.json --allow-empty
           echo "exit_code=$?" >> "$GITHUB_ENV"
 
-      - name: Report the outcome (only a crash/bad-usage/malformed result fails the job)
+      - name: Validate the live result
         run: |
           python3 -c "
           import json, os, sys
@@ -58,14 +68,9 @@ jobs:
               assert meta['status'] == 'complete'
               assert meta['rating_count'] >= 1
               print(f\"canary: got {meta['rating_count']} real ratings\")
-          elif code == 3:
-              print('::warning::blocked — see this workflow\\'s own note on datacentre-IP risk')
-          elif code == 5:
-              print('::warning::remote_api_error — navigation/network failure from this runner')
-          elif code == 6:
-              print(f\"::warning::partial — {meta.get('failed_tickers')} failed, {meta['rating_count']} succeeded\")
-          elif code == 4:
-              print('::warning::zero ratings — every requested ticker came back not-found or blocked')
+          else:
+              print(f\"::error::live scrape unavailable: exit={code}, status={meta.get('status')}, failed={meta.get('failed_tickers')}\")
+              sys.exit(1)
           "
 
       - name: Upload the run's output on every attempt

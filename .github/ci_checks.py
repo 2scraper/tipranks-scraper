@@ -31,7 +31,8 @@ TOKEN_RULES = {
 }
 URL_CREDENTIALS = re.compile(r"\b(?:https?|wss?)://([^\s/@:]+):([^\s/@]+)@", re.I)
 SECRET_ASSIGNMENT = re.compile(
-    r"\b(?:api[_-]?key|CLAUDE_CODE_OAUTH_TOKEN)\s*(?:=|:)\s*['\"]([^'\"]{8,})['\"]",
+    r"\b(?:api[_-]?key|CLAUDE_CODE_OAUTH_TOKEN)\s*(?:=|:)\s*"
+    r"(?:(['\"])([^'\"]{8,})\1|([^\s#'\"]{8,}))",
     re.I,
 )
 PLACEHOLDER_WORDS = (
@@ -112,7 +113,7 @@ def scan() -> list[tuple[str, int, str]]:
                 if not is_placeholder(match.group(1), match.group(2)):
                     findings.append((relative, line_no, "credentialed_url"))
             for match in SECRET_ASSIGNMENT.finditer(line):
-                value = match.group(1)
+                value = match.group(2) or match.group(3)
                 if not is_placeholder(value, value):
                     findings.append((relative, line_no, "secret_assignment"))
     return findings

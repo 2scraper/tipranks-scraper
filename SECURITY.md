@@ -50,9 +50,10 @@ anywhere in this repo. There is nothing here to leak.
   forced, so it never overrides a value you set yourself) so this
   project's "nothing phones home" claim actually holds. Selenium Manager
   can still make a *separate* network call to resolve a matching
-  `chromedriver` version if one isn't already reachable on `PATH` — set
-  `SELENIUM_CHROME_BIN` to a Chrome/Chromium binary you already have to
-  avoid it entirely.
+  `chromedriver` version if one isn't already reachable on `PATH`.
+  `--executable-path` selects an installed Chrome/Chromium binary, but does
+  not itself provide chromedriver; put a compatible chromedriver on `PATH`
+  if Selenium Manager must not access the network.
 - **robots.txt**: `tipranks_parser.is_allowed()` re-derives its answer
   from a captured copy of `https://www.tipranks.com/robots.txt` at
   runtime rather than a hardcoded conclusion — see that module's
