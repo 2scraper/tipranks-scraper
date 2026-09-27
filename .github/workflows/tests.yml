@@ -1,0 +1,120 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  offline:
+    name: offline checks (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install core dependencies (no engine — smoke_test must still pass)
+        run: pip install -r requirements.txt
+      - name: Byte-compile everything
+        run: python -m compileall -q .
+      - name: Run the offline smoke suite
+        # This job installs NO engine driver on purpose: every engine
+        # script must import cleanly with none of
+        # playwright/selenium/pyppeteer present, and this is the job that
+        # proves it rather than asserting it. smoke_test.py also runs the
+        # credential scanner and the sample_output/Dockerfile checks
+        # itself (guarded to skip if a file isn't present yet).
+        run: python3 smoke_test.py
+      - name: --help works for every CLI
+        run: |
+          for engine in playwright_scraper selenium_scraper puppeteer_scraper; do
+            python3 "$engine.py" --help > /dev/null
+          done
+      - name: No committed credentials (direct run, not only via smoke_test.py)
+        run: python3 .github/ci_checks.py
+
+  docker:
+    name: docker image builds, runs, and launches Chromium
+    runs-on: ubuntu-latest
+    # Build the Docker image in CI — nothing else does, and that is
+    # exactly how a family member can ship a broken one (a COPY list
+    # missing a file smoke_test.py needs at build time) without anyone
+    # noticing until a user's build failed. Four steps, each catching a
+    # distinct way the image can lie about working: it builds at all; its
+    # own entrypoint runs (the CMD is --help — the exact invocation a
+    # missing module breaks); a real browser actually launches (not just
+    # "playwright install --with-deps" exiting 0); and it carries no
+    # .env and no test suite.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t tipranks-scraper:ci .
+      - name: Entrypoint runs (the CMD a missing module would break)
+        run: docker run --rm tipranks-scraper:ci
+      - name: A real browser actually launches inside the image
+        run: |
+          docker run --rm --entrypoint python3 tipranks-scraper:ci -c "
+          import asyncio
+          from playwright.async_api import async_playwright
+          async def main():
+              async with async_playwright() as pw:
+                  browser = await pw.chromium.launch(headless=True, args=['--no-sandbox'])
+                  page = await browser.new_page()
+                  await page.goto('about:blank')
+                  await browser.close()
+              print('Chromium launched OK')
+          asyncio.run(main())
+          "
+      - name: Image carries no .env and no test suite
+        run: |
+          BAD=$(docker run --rm --entrypoint sh tipranks-scraper:ci -c \
+            "ls -d .env tests 2>/dev/null; ls *_test.py 2>/dev/null" || true)
+          if [ -n "$BAD" ]; then
+            echo "$BAD"
+            echo "::error::image contains files it must not ship: see above"
+            exit 1
+          fi
+          echo "image is clean"
+
+  engine-smoke:
+    name: engine-smoke (${{ matrix.engine }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [playwright, selenium, puppeteer]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # One venv PER engine, installed from its OWN requirements file. A
+      # single shared environment can resolve the three engines' mutually
+      # unsatisfiable pins (pyee, urllib3) by reaching for whatever it
+      # can, and silently install a stub instead of the real pinned
+      # version while staying green.
+      - name: Create venv and install requirements-${{ matrix.engine }}.txt
+        run: |
+          python -m venv .venv-${{ matrix.engine }}
+          source .venv-${{ matrix.engine }}/bin/activate
+          pip install -r requirements-${{ matrix.engine }}.txt
+          pip check
+      - name: Install browser (Playwright only — Selenium/pyppeteer fetch their own)
+        if: matrix.engine == 'playwright'
+        run: |
+          source .venv-playwright/bin/activate
+          playwright install --with-deps chromium
+      - name: Run the smoke suite and assert THIS engine did not skip
+        run: |
+          source .venv-${{ matrix.engine }}/bin/activate
+          python3 smoke_test.py
+          python3 -c "
+          import ${{ matrix.engine }}_scraper as m
+          attr = {'playwright': 'sync_playwright', 'selenium': 'webdriver', 'puppeteer': 'pyppeteer_launch'}['${{ matrix.engine }}']
+          assert getattr(m, attr) is not None, \
+              '${{ matrix.engine }} did not import — this job installed it and must not report absent'
+          print('${{ matrix.engine }} engine import OK')
+          "

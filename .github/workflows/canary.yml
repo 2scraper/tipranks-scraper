@@ -1,0 +1,79 @@
+name: canary
+
+on:
+  schedule:
+    - cron: "23 7 * * *"   # once daily; avoid :00 so it doesn't pile up with everyone else's
+  workflow_dispatch: {}     # dispatch manually at least once before trusting the badge
+
+jobs:
+  # A real run against real tickers. Unlike this project's siblings, this
+  # one needs no secret at all — the ticker page is free, public data
+  # (see SECURITY.md) — so this canary runs unconditionally rather than
+  # skipping behind an optional-secret gate.
+  #
+  # It is NOT strict the way a sibling's proxy-gated canary is, for one
+  # honest reason stated in tipranks_parser.py's module docstring: this
+  # project's own research never saw a live block, but that was from a
+  # residential/desktop browsing session, not a bare GitHub-hosted
+  # runner's datacentre IP — Cloudflare treating those differently is a
+  # real, plausible, undocumented risk, not a hypothetical. So `blocked`
+  # and `remote_api_error` are reported clearly but do NOT fail the job;
+  # only a crash or a malformed result does. If this canary starts
+  # reporting real, complete data reliably over time, tighten it.
+  canary-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install -r requirements-playwright.txt
+          playwright install --with-deps chromium
+
+      - name: Scrape a handful of real tickers
+        run: |
+          set +e
+          python3 playwright_scraper.py \
+            --ticker AAPL --ticker MSFT --ticker GOOGL \
+            --format json --out canary_out.json --allow-empty
+          echo "exit_code=$?" >> "$GITHUB_ENV"
+
+      - name: Report the outcome (only a crash/bad-usage/malformed result fails the job)
+        run: |
+          python3 -c "
+          import json, os, sys
+
+          code = int(os.environ['exit_code'])
+          print(f'playwright_scraper.py exited {code}')
+
+          if code in (1, 2):
+              print(f'::error::exit {code} means crashed or bad usage — a real bug, not a site condition')
+              sys.exit(1)
+
+          meta = json.load(open('canary_out.json.meta.json'))
+          print(json.dumps(meta, indent=2))
+
+          if code == 0:
+              assert meta['status'] == 'complete'
+              assert meta['rating_count'] >= 1
+              print(f\"canary: got {meta['rating_count']} real ratings\")
+          elif code == 3:
+              print('::warning::blocked — see this workflow\\'s own note on datacentre-IP risk')
+          elif code == 5:
+              print('::warning::remote_api_error — navigation/network failure from this runner')
+          elif code == 6:
+              print(f\"::warning::partial — {meta.get('failed_tickers')} failed, {meta['rating_count']} succeeded\")
+          elif code == 4:
+              print('::warning::zero ratings — every requested ticker came back not-found or blocked')
+          "
+
+      - name: Upload the run's output on every attempt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-live-${{ github.run_id }}
+          path: |
+            canary_out.json
+            canary_out.json.meta.json
+          retention-days: 14

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2scraper — TipRanks Scraper</title>
+<style>
+  :root{
+    --bg:#0F1216;
+    --panel:#181B20;
+    --panel-2:#141619;
+    --line:#2A2D34;
+    --text:#D7D9DE;
+    --muted:#8B8F99;
+    --ontime:#2ECC71;
+    --delay:#F5B400;
+    --accent:#3FA9F5;
+    --mono:'IBM Plex Mono','Space Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); line-height:1.55; }
+  a{ color:var(--accent); text-decoration:none; }
+  a:hover{ text-decoration:underline; }
+  .wrap{ max-width:1040px; margin:0 auto; padding:0 24px; }
+
+  .board{ background:var(--panel-2); border-bottom:1px solid var(--line); overflow:hidden; white-space:nowrap; padding:8px 0; }
+  .board-track{ display:inline-block; font-family:var(--mono); font-size:12.5px; animation:scroll-left 34s linear infinite; }
+  .board-track span{ margin-right:36px; }
+  .ontime{ color:var(--ontime); } .delay{ color:var(--delay); }
+  @keyframes scroll-left{ from{ transform:translateX(0);} to{ transform:translateX(-50%);} }
+  @media (prefers-reduced-motion: reduce){ .board-track{ animation:none; } }
+
+  header.topbar{ border-bottom:1px solid var(--line); }
+  .topbar-inner{ display:flex; align-items:center; justify-content:space-between; padding:16px 24px; max-width:1040px; margin:0 auto; }
+  .logo{ font-family:var(--mono); font-weight:700; font-size:14px; letter-spacing:0.05em; }
+  .logo span{ color:var(--muted); }
+  nav a{ color:var(--muted); font-family:var(--mono); font-size:12.5px; margin-left:20px; }
+  nav a:hover{ color:var(--accent); }
+
+  .hero{ padding:64px 0 30px; text-align:center; }
+  .eyebrow{ font-family:var(--mono); font-size:12px; letter-spacing:0.18em; color:var(--muted); text-transform:uppercase; margin-bottom:16px; }
+  h1{ font-family:var(--sans); font-weight:800; font-size:clamp(28px,4.6vw,46px); line-height:1.2; margin:0 0 18px; color:#fff; }
+  h1 .accent{ color:var(--accent); }
+  .hero p.sub{ max-width:620px; margin:0 auto 30px; font-size:16.5px; color:var(--muted); }
+
+  .signature{ display:flex; justify-content:center; margin-bottom:36px; }
+  .sig-svg{ width:100%; max-width:640px; height:130px; }
+  .node-box{ fill:var(--panel); stroke:var(--line); stroke-width:1.5; }
+  .node-label{ font-family:var(--mono); font-size:11px; fill:var(--text); }
+  .node-sub{ font-family:var(--mono); font-size:9px; fill:var(--muted); }
+  .flow-line{ stroke:var(--line); stroke-width:1.5; fill:none; stroke-dasharray:5 5; }
+  .flow-dot{ fill:var(--accent); filter:drop-shadow(0 0 4px var(--accent)); }
+  @keyframes travel1{ 0%{ offset-distance:0%; opacity:0; } 5%{ opacity:1; } 95%{ opacity:1; } 100%{ offset-distance:100%; opacity:0; } }
+  .dot-a{ offset-path:path('M 40 65 H 600'); animation: travel1 2.6s linear infinite; }
+  @media (prefers-reduced-motion: reduce){ .dot-a{ animation:none; opacity:0; } }
+
+  .cta-row{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .btn{ font-family:var(--mono); font-size:13px; letter-spacing:0.03em; padding:13px 22px; border-radius:4px; border:1px solid var(--line); display:inline-flex; align-items:center; gap:8px; }
+  .btn-primary{ background:var(--accent); border-color:var(--accent); color:#08131C; font-weight:700; }
+  .btn-primary:hover{ text-decoration:none; filter:brightness(1.08); }
+  .btn-ghost{ color:var(--text); }
+  .btn-ghost:hover{ text-decoration:none; border-color:var(--accent); color:var(--accent); }
+
+  section{ padding:52px 0; }
+  .section-eyebrow{ font-family:var(--mono); font-size:12px; letter-spacing:0.16em; color:var(--accent); text-transform:uppercase; margin-bottom:10px; }
+  h2{ font-family:var(--sans); font-weight:700; font-size:26px; color:#fff; margin:0 0 26px; }
+
+  .callout{ background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:4px; padding:16px 18px; font-size:14.5px; color:var(--text); margin-bottom:30px; }
+  .callout strong{ color:#fff; }
+  .callout.honest{ border-left-color:var(--delay); }
+
+  table.board-table{ width:100%; border-collapse:collapse; font-family:var(--mono); font-size:14px; }
+  table.board-table thead th{ text-align:left; color:var(--muted); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; padding:10px 14px; border-bottom:1px solid var(--line); }
+  table.board-table tbody td{ padding:15px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.board-table tbody tr:hover{ background:rgba(63,169,245,0.05); }
+  .pill{ display:inline-block; font-size:11px; padding:3px 9px; border-radius:3px; letter-spacing:0.05em; font-weight:700; }
+  .pill.buy{ background:rgba(46,204,113,0.15); color:var(--ontime); border:1px solid rgba(46,204,113,0.4); }
+  .pill.watch{ background:rgba(63,169,245,0.15); color:var(--accent); border:1px solid rgba(63,169,245,0.4); }
+
+  .codebox{ background:#0A0B0D; border:1px solid var(--line); border-radius:6px; padding:20px 22px; font-family:var(--mono); font-size:13px; color:var(--ontime); overflow-x:auto; line-height:1.7; }
+  .codebox .cmt{ color:var(--muted); }
+  .codebox .cmd{ color:var(--text); }
+
+  footer{ border-top:1px solid var(--line); padding:34px 0; color:var(--muted); font-size:13px; font-family:var(--mono); }
+  footer a{ color:var(--muted); }
+  footer a:hover{ color:var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="board">
+  <div class="board-track">
+    <span class="delay">SAMPLE ROW — REAL CAPTURED DATA, ONE TICKER (AAPL)</span>
+    <span class="ontime">✓ AAPL Smart Score 7/10</span>
+    <span class="ontime">✓ AAPL consensus: Moderate Buy · 15 buy / 11 hold / 4 sell</span>
+    <span class="ontime">✓ AAPL price target avg $334.90 (range $245–$400)</span>
+    <span class="delay">⏱ current_price is best-effort — the payload can lag the live quote</span>
+    <span class="delay">SAMPLE ROW — REAL CAPTURED DATA, ONE TICKER (AAPL)</span>
+    <span class="ontime">✓ AAPL Smart Score 7/10</span>
+    <span class="ontime">✓ AAPL consensus: Moderate Buy · 15 buy / 11 hold / 4 sell</span>
+    <span class="ontime">✓ AAPL price target avg $334.90 (range $245–$400)</span>
+    <span class="delay">⏱ current_price is best-effort — the payload can lag the live quote</span>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="logo">2SCRAPER<span> / tipranks.com</span></div>
+    <nav>
+      <a href="#engines">Engines</a>
+      <a href="#honest">Bot protection</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/2scraper/tipranks-scraper">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <div class="eyebrow">Open-source stock ticker forecast data</div>
+    <h1>Free, public data.<br>No <span class="accent">login</span>, no proxy, no captcha solving.</h1>
+    <p class="sub">
+      Open-source scraper for a tipranks.com stock ticker's forecast page.
+      Three engines, one documented output schema — Smart Score, the
+      analyst consensus (Buy/Hold/Sell), and the price target, straight
+      from the page's own JSON API. Nothing else needed: this data has no
+      credential model at all.
+    </p>
+
+    <div class="signature">
+      <svg class="sig-svg" viewBox="0 0 640 130" xmlns="http://www.w3.org/2000/svg">
+        <path class="flow-line" d="M 40 65 H 600" />
+        <circle class="flow-dot dot-a" r="4"/>
+
+        <rect class="node-box" x="10" y="46" width="180" height="40" rx="6"/>
+        <text class="node-label" x="100" y="63" text-anchor="middle">YOUR SCRIPT</text>
+        <text class="node-sub" x="100" y="77" text-anchor="middle">Playwright / Selenium / pyppeteer</text>
+
+        <rect class="node-box" x="245" y="46" width="150" height="40" rx="6"/>
+        <text class="node-label" x="320" y="63" text-anchor="middle">stock-analysis/</text>
+        <text class="node-sub" x="320" y="77" text-anchor="middle">payload.json (real JSON API)</text>
+
+        <rect class="node-box" x="460" y="46" width="170" height="40" rx="6"/>
+        <text class="node-label" x="545" y="63" text-anchor="middle">TIPRANKS.COM</text>
+        <text class="node-sub" x="545" y="77" text-anchor="middle">Smart Score · consensus · target</text>
+      </svg>
+    </div>
+
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/2scraper/tipranks-scraper">View on GitHub</a>
+      <a class="btn btn-ghost" href="#start">Read the docs</a>
+    </div>
+  </div>
+
+  <section id="engines">
+    <div class="section-eyebrow">The rack</div>
+    <h2>One file per engine</h2>
+    <table class="board-table">
+      <thead>
+        <tr><th>Engine</th><th>Runtime</th><th>Best for</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Playwright</td>
+          <td>Python, single file</td>
+          <td>Primary engine — real HTTP status from the navigation response</td>
+          <td><span class="pill buy">RECOMMENDED</span></td>
+        </tr>
+        <tr>
+          <td>Puppeteer</td>
+          <td>Python (pyppeteer), single file</td>
+          <td>Same not-found detection as Playwright (a real response status)</td>
+          <td><span class="pill watch">PARITY</span></td>
+        </tr>
+        <tr>
+          <td>Selenium</td>
+          <td>Python, single file</td>
+          <td>Stack-compatibility — chromedriver has no response-status API, so not-found detection reads the page's own confirmed "Error 404" title instead (documented difference)</td>
+          <td><span class="pill watch">PARITY</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="honest">
+    <div class="section-eyebrow">One thing worth saying plainly</div>
+    <h2>Bot protection</h2>
+    <div class="callout honest">
+      <strong>Fastly + Cloudflare, and an unrendered reCAPTCHA.</strong>
+      Two edge layers sit in front of tipranks.com, confirmed from real
+      response headers: Fastly (caching — the page up to 24h, the JSON
+      payload up to 5 minutes) and Cloudflare (a bot-management
+      fingerprinting script on every page view). Google reCAPTCHA's
+      script is also loaded on the page, present but never
+      auto-rendered. Neither ever actually challenged a request across
+      roughly 15 distinct tickers and 30+ requests in this project's own
+      research — all clean 200s, no CAPTCHA, no 429. That's "not
+      observed to challenge this traffic," not "confirmed unprotected."
+      See <code>tipranks_parser.py</code>'s module docstring for the
+      full detail.
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="section-eyebrow">Check out</div>
+    <h2>Get started</h2>
+    <div class="codebox">
+<span class="cmt"># clone and install — no .env, no credentials needed</span><br>
+<span class="cmd">git clone https://github.com/2scraper/tipranks-scraper.git</span><br>
+<span class="cmd">cd tipranks-scraper &amp;&amp; pip install -r requirements-playwright.txt &amp;&amp; playwright install chromium</span><br><br>
+<span class="cmt"># one ticker, or several</span><br>
+<span class="cmd">python3 playwright_scraper.py --ticker AAPL --ticker MSFT --format json --out results.json</span>
+    </div>
+    <p style="color:var(--muted); font-size:14.5px; margin:22px 0 0;">
+      Built for anyone tracking how a stock's analyst consensus or price
+      target moves over time, and anyone who wants TipRanks' ticker-page
+      data in a script rather than a browser tab.
+    </p>
+  </section>
+
+  <section>
+    <div class="callout">
+      <strong>Building something similar for another site?</strong>
+      <a href="https://2captcha.com/contact">Talk to us →</a>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap" style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+    <span>2SCRAPER — open-source, MIT license</span>
+    <span>
+      <a href="https://github.com/2scraper/tipranks-scraper">GitHub</a> ·
+      <a href="https://2captcha.com">2captcha.com</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
