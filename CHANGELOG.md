@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-27
+
 ### Added
 
 - `--executable-path` flag on all three engines, to launch an
@@ -95,5 +97,6 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/2scraper/tipranks-scraper/releases/tag/v0.1.0
