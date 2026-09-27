@@ -38,8 +38,8 @@ CONFIRMED, from a real captured session:
   `highPriceTarget`, `lowPriceTarget`.
 - A scope's consensus fields (`buy`/`hold`/`sell`/`total`/`id`/`enumId`)
   can be ABSENT even when `priceTarget` is present — confirmed live for
-  LUV and T, both of which returned only `{"priceTarget": {...}}` under
-  `all` with no buy/hold/sell breakdown at all. `analystRatings` itself
+  LUV, T, and KO, all of which returned only `{"priceTarget": {...}}`
+  under `all` with no buy/hold/sell breakdown at all. `analystRatings` itself
   (the whole `all`/`best`/*Consensus block) can be missing entirely too —
   confirmed live for GME, whose record had only `smartScore`, nothing
   under `analystRatings` at all. This parser treats every one of these
@@ -97,14 +97,26 @@ CONFIRMED, from a real captured session:
   rendered a challenge in this session. No Cloudflare Turnstile script,
   no hCaptcha, and no known DataDome/PerimeterX/Akamai
   Bot-Manager/Imperva/Kasada/Arkose Labs cookie or script was found in
-  any capture. Across roughly 15 distinct tickers and 30+ page/payload
-  requests this session (spread across the initial research and a later
-  follow-up batch — TSLA, GOOGL, BRK.B, GME, CVNA among them), every
-  single one returned a clean 200 with real data; none triggered a
-  visible challenge, a CAPTCHA, or a 429. This is stated as "not observed
-  to challenge this session's traffic," not "confirmed unprotected" —
-  unlike g2.com's DataDome, there is no known solvable challenge type to
-  wire up here, because none was ever presented to solve.
+  any capture. Across roughly 20 distinct tickers and 35+ page/payload
+  requests this session (spread across the initial research and two
+  later follow-up batches — TSLA, GOOGL, BRK.B, GME, CVNA, NVDA, JPM,
+  DIS, KO among them), every single one returned a clean 200 with real
+  data; none triggered a visible challenge, a CAPTCHA, or a 429. This is
+  stated as "not observed to challenge this session's traffic," not
+  "confirmed unprotected" — unlike g2.com's DataDome, there is no known
+  solvable challenge type to wire up here, because none was ever
+  presented to solve.
+- The shipped `parse_payload()` / `output_writer.finish_run()` path
+  itself (not just the network fetch) was run end-to-end against five
+  freshly captured live payloads (NVDA, TSLA, JPM, DIS, KO): the payload
+  bytes came from a real browser session's same-origin `fetch()` against
+  `payload.json`, fed straight into this module's `parse_payload()` and
+  then `finish_run()`. All five produced `EXIT_OK` with correct field
+  extraction, including KO's sparse-consensus case (above) degrading
+  exactly as designed. This confirms the parsing/output contract against
+  real current data; it does not by itself confirm any of the three
+  browser-engine scripts, which still need their own live run with an
+  actual installed driver.
 
 NOT confirmed / explicitly out of scope:
 
