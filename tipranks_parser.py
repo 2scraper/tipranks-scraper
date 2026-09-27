@@ -121,6 +121,10 @@ CONFIRMED, from a real captured session:
   "confirmed unprotected" — unlike g2.com's DataDome, there is no known
   solvable challenge type to wire up here, because none was ever
   presented to solve.
+- A later pre-release audit did observe a real 403/429-class block after a
+  successful run from the same environment. The engines now classify that
+  outcome explicitly as `blocked` (exit 3), and the live canary fails rather
+  than presenting an availability-green badge with zero data.
 - The shipped `parse_payload()` / `output_writer.finish_run()` path
   itself (not just the network fetch) was run end-to-end against five
   freshly captured live payloads (NVDA, TSLA, JPM, DIS, KO): the payload
@@ -152,6 +156,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 BASE_URL = "https://www.tipranks.com"
+TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,31}$")
 
 # Verbatim capture of https://www.tipranks.com/robots.txt (single
 # `User-agent: *` group). Kept as a literal string, not a hand-written
@@ -191,13 +196,13 @@ Allow: /investors/*
 """
 
 
-def _robots_rules() -> List[tuple]:
-    """Parse ROBOTS_TXT_CAPTURE into (directive, pattern) pairs for the
+def parse_robots_rules(text: str) -> List[tuple]:
+    """Parse robots.txt text into (directive, pattern) pairs for the
     (only) `User-agent: *` group. Order preserved; matching is
     longest-pattern-wins per the documented robots.txt convention, not
     first-match or last-match."""
     rules = []
-    for line in ROBOTS_TXT_CAPTURE.splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line.lower().startswith("allow:"):
             rules.append(("allow", line.split(":", 1)[1].strip()))
@@ -208,7 +213,7 @@ def _robots_rules() -> List[tuple]:
     return rules
 
 
-_ROBOTS_RULES = _robots_rules()
+_ROBOTS_RULES = parse_robots_rules(ROBOTS_TXT_CAPTURE)
 
 
 def _pattern_to_regex(pattern: str) -> re.Pattern:
@@ -232,12 +237,29 @@ def is_allowed(path: str) -> bool:
     return best_directive == "allow"
 
 
+def normalize_ticker(raw: str) -> str:
+    """Return a canonical ticker safe to interpolate into a URL path.
+
+    TipRanks is case-insensitive and a dot is confirmed live (BRK.B). A
+    hyphen is accepted as a conventional ticker separator, while slashes,
+    query delimiters, whitespace inside the symbol, and dot-segments are
+    rejected so the URL checked against robots.txt is the URL the browser
+    actually requests.
+    """
+    ticker = raw.strip().upper()
+    if not TICKER_RE.fullmatch(ticker) or ".." in ticker:
+        raise ValueError(
+            f"invalid ticker {raw!r}: expected 1-32 letters, digits, dots or hyphens"
+        )
+    return ticker
+
+
 def ticker_page_url(ticker: str) -> str:
-    return f"{BASE_URL}/stocks/{ticker.lower()}/stock-analysis"
+    return f"{BASE_URL}/stocks/{normalize_ticker(ticker).lower()}/stock-analysis"
 
 
 def ticker_payload_url(ticker: str) -> str:
-    return f"{BASE_URL}/stocks/{ticker.lower()}/stock-analysis/payload.json"
+    return f"{BASE_URL}/stocks/{normalize_ticker(ticker).lower()}/stock-analysis/payload.json"
 
 
 def humanize_consensus_id(raw_id: Optional[str]) -> Optional[str]:
@@ -307,8 +329,9 @@ class TickerRating:
 
 
 def _extract_scope(scope: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    scope = scope or {}
-    pt = scope.get("priceTarget") or {}
+    scope = scope if isinstance(scope, dict) else {}
+    pt = scope.get("priceTarget")
+    pt = pt if isinstance(pt, dict) else {}
     return {
         "id": scope.get("id"),
         "total": scope.get("total"),
@@ -328,9 +351,18 @@ def find_ticker_record(payload: Dict[str, Any], ticker: str) -> Optional[Dict[st
     payload's `models.stocks` list — never just `stocks[0]`, since that
     list also carries unrelated sidebar entries (confirmed live: AAPL's
     payload included ADTN/AEHR/BELFB/ONTO/SAP alongside AAPL itself)."""
-    stocks = ((payload or {}).get("models") or {}).get("stocks") or []
-    ticker_upper = ticker.upper()
+    if not isinstance(payload, dict):
+        return None
+    models = payload.get("models")
+    if not isinstance(models, dict):
+        return None
+    stocks = models.get("stocks")
+    if not isinstance(stocks, list):
+        return None
+    ticker_upper = normalize_ticker(ticker)
     for stock in stocks:
+        if not isinstance(stock, dict):
+            continue
         if str(stock.get("_id", "")).upper() == ticker_upper:
             return stock
     return None
@@ -347,20 +379,25 @@ def parse_payload(
     if record is None:
         return None
 
-    ratings = record.get("analystRatings") or {}
+    ratings = record.get("analystRatings")
+    ratings = ratings if isinstance(ratings, dict) else {}
     all_scope = _extract_scope(ratings.get("all"))
     best_scope = _extract_scope(ratings.get("best"))
 
-    smart_score = record.get("smartScore") or {}
-    company = record.get("company") or {}
+    smart_score = record.get("smartScore")
+    smart_score = smart_score if isinstance(smart_score, dict) else {}
+    company = record.get("company")
+    company = company if isinstance(company, dict) else {}
 
-    quotes = record.get("quotes") or {}
+    quotes = record.get("quotes")
+    quotes = quotes if isinstance(quotes, dict) else {}
     trade_time = quotes.get("tradeTime")
-    current_quote = quotes.get(trade_time) if trade_time else None
+    current_quote = quotes.get(trade_time) if isinstance(trade_time, str) else None
+    current_quote = current_quote if isinstance(current_quote, dict) else None
     if current_quote is None:
         # Fall back to whichever known quote sub-object is present.
         for key in ("open", "pre"):
-            if quotes.get(key):
+            if isinstance(quotes.get(key), dict):
                 current_quote = quotes[key]
                 trade_time = key
                 break

@@ -67,13 +67,11 @@ scripts' actual browser-automation code (`page.goto` + the in-page
 `fetch()` of `payload.json`, per engine) is only proven by a real live
 run, below — `smoke_test.py` never launches a browser at all.
 
-The `EXIT_BLOCKED` path specifically: the 403/429 check in each engine's
-own fetch function has never fired against a real response — this site
-has never blocked a single one of this project's requests (see
-`tipranks_parser.py`'s module docstring for the tally). `smoke_test.py`
-proves the wiring works by injecting a fake blocked result, not by
-provoking a real block, because there's no known way to reliably provoke
-one on demand.
+The `EXIT_BLOCKED` path has now fired in a real Playwright run during a
+pre-release audit, after an earlier run from the same environment completed
+successfully. `smoke_test.py` still proves the wiring deterministically by
+injecting a fake blocked result; the live condition cannot be provoked on
+demand and belongs to the scheduled canary.
 
 ## Live testing checklist
 
@@ -86,12 +84,16 @@ one on demand.
 7. `python3 diff_runs.py out1.json out2.json` against two real runs a few minutes apart — confirm `price target changed`/`smart score changed` behave sensibly (small moves are normal; see `tipranks_parser.py`'s note on the payload's own edge-cache TTL for why a very recent price can lag).
 8. Grep the actual stdout/output files for anything unexpected — this repo has no credentials to leak, but confirm a crash's traceback doesn't contain anything it shouldn't either.
 9. `docker build -t tipranks-scraper .` then `docker run --rm tipranks-scraper --ticker AAPL` — confirm the entrypoint works and the image doesn't ship `tests/`/`smoke_test.py`.
-10. CI: this repo's `canary` workflow needs no secret to run — see `.github/workflows/canary.yml`'s own comments for why a live block from a datacentre IP is treated as a warning there, not a failure, and reconsider that if the canary starts running clean over time.
+10. CI: this repo's `canary` workflow needs no secret to run. It fails on a
+    block, remote error, partial run, or zero ratings; a green badge therefore
+    means the GitHub runner collected real data. It also checks that the
+    captured robots.txt Allow/Disallow rules still match the live file.
 
 ## What "done" looks like
 
-`smoke_test.py` green with no engine installed, green again in each
-engine's own virtualenv per CI's `engine-smoke` matrix, a real live run
-against at least one real ticker per engine (step 5/6 above), and the
-Docker image builds and runs. That's the bar this repo's own CI enforces
-on every PR.
+`smoke_test.py` green with no engine installed, green again in each engine's
+own virtualenv per CI's `engine-smoke` matrix, manually recorded live runs
+against at least one real ticker per engine (step 5/6 above), and a Docker
+image that builds and runs. Pull-request CI enforces the offline, import and
+Docker portions; the scheduled canary live-tests Playwright only. Selenium
+and Puppeteer live checks remain an explicit release checklist item.

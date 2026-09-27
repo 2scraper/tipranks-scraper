@@ -41,6 +41,45 @@ All notable changes to this project are documented here. Format follows
   unaffected on the same machine. `--executable-path` pointed at a
   working system Chrome is the fix; documented in
   `puppeteer_scraper.py`'s module docstring.
+- **Playwright engine caught a real navigation failure as a crash**:
+  `fetch_one()` only caught `PlaywrightTimeoutError` around `page.goto()`,
+  so any other navigation failure (DNS, connection refused, a broken
+  proxy/tunnel) propagated up as `EXIT_CRASH` (1) instead of `EXIT_
+  REMOTE_API_ERROR` (5), violating CLAUDE.md §10. Selenium and Puppeteer
+  already caught navigation failures broadly; Playwright now matches them.
+- Reject unsafe ticker path/query input before URL construction
+  (`tipranks_parser.normalize_ticker()`); trim and canonicalize valid
+  ticker symbols consistently across all engines.
+- Malformed or unexpected payload shapes (a non-dict `analystRatings`,
+  a `quotes` list instead of an object, a schema-drifted record) now
+  degrade a single ticker to `remote_api_error` instead of crashing the
+  whole run; `find_ticker_record`/`_extract_scope`/`parse_payload` type-
+  check every optional structure before reading it.
+- Atomically replace output and sidecar files (write to a temp file,
+  `fsync`, `os.replace`), record an output SHA-256 in every new sidecar,
+  and have `diff_runs.py` refuse an output/sidecar pair whose checksum
+  doesn't match (a sign the previous write was interrupted).
+- Credential scanner (`.github/ci_checks.py`): `SECRET_ASSIGNMENT` only
+  matched a quoted value: `TOKEN="..."`. An unquoted assignment (as it'd
+  appear in a shell env or a YAML `env:` block) went undetected. Now
+  matches both forms.
+- Live canary (`.github/workflows/canary.yml`): now fails the job on any
+  non-`complete` outcome (blocked, remote error, partial, zero ratings)
+  instead of only warning, so a green badge means real data was actually
+  collected, not just that the CLI didn't crash. It also fetches
+  `https://www.tipranks.com/robots.txt` at run time and fails if the
+  parsed Allow/Disallow rules no longer match the captured copy
+  (`tipranks_parser._robots_rules` is now the public
+  `parse_robots_rules(text)` so the canary can reuse it against live
+  text). **This tightening follows a real 403/429-class block observed
+  in a pre-release audit, after an earlier run from the same environment
+  had completed successfully — see `tipranks_parser.py`'s module
+  docstring.**
+- `smoke_test.py`: stopped writing generated output into the repo's own
+  working tree (temp dirs instead); added coverage for ticker
+  normalization, malformed-payload tolerance, the checksum/sidecar
+  check, a mixed blocked+network-error precedence case, the Playwright
+  navigation-error fix above, and both credential-assignment forms.
 
 ## [0.1.0] - 2026-09-27
 

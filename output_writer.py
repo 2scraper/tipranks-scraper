@@ -14,7 +14,11 @@ requested/completed rather than pages.
 from __future__ import annotations
 
 import csv
+import hashlib
+import io
 import json
+import os
+import tempfile
 import time
 from dataclasses import asdict, fields
 from pathlib import Path
@@ -49,17 +53,43 @@ RATING_FIELD_NAMES: List[str] = [f.name for f in fields(TickerRating)]
 # --------------------------------------------------------------------------- #
 # Writers
 # --------------------------------------------------------------------------- #
+def _atomic_write_text(path: str, text: str) -> None:
+    """Durably replace one text file without exposing a truncated target."""
+    target = Path(path)
+    parent = target.parent if str(target.parent) else Path(".")
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=str(parent))
+    try:
+        mode = (target.stat().st_mode & 0o777) if target.exists() else 0o644
+        os.chmod(tmp_name, mode)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, target)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def write_json(ratings: Sequence[TickerRating], out_path: str) -> None:
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump([asdict(r) for r in ratings], f, ensure_ascii=False, indent=2)
+    text = json.dumps([asdict(r) for r in ratings], ensure_ascii=False, indent=2)
+    _atomic_write_text(out_path, text)
 
 
 def write_csv(ratings: Sequence[TickerRating], out_path: str) -> None:
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=RATING_FIELD_NAMES)
-        writer.writeheader()  # written even for zero rows.
-        for r in ratings:
-            writer.writerow(asdict(r))
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=RATING_FIELD_NAMES)
+    writer.writeheader()  # written even for zero rows.
+    for r in ratings:
+        writer.writerow(asdict(r))
+    _atomic_write_text(out_path, buffer.getvalue())
 
 
 def write_output(ratings: Sequence[TickerRating], out_path: str, fmt: str) -> None:
@@ -91,6 +121,7 @@ def write_meta(
     started_at: float,
     finished_at: Optional[float] = None,
     extra: Optional[dict] = None,
+    output_sha256: Optional[str] = None,
 ) -> None:
     meta = {
         "status": status,
@@ -103,10 +134,12 @@ def write_meta(
         "started_at": started_at,
         "finished_at": finished_at or time.time(),
     }
+    if output_sha256:
+        meta["output_sha256"] = output_sha256
     if extra:
         meta.update(extra)
-    Path(meta_path_for(out_path)).write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    _atomic_write_text(
+        meta_path_for(out_path), json.dumps(meta, ensure_ascii=False, indent=2)
     )
 
 
@@ -131,8 +164,9 @@ def finish_run(
     """Same outcome precedence as the rest of the family (CLAUDE.md §9):
     remote_api_error > blocked > zero_products > partial > complete,
     decided once, independent of --allow-empty. A zero-result outcome
-    writes neither file unless the caller passed --allow-empty; a failed
-    run never gets a sidecar.
+    writes neither file unless the caller explicitly passed --allow-empty;
+    that flag is also the opt-in used by diagnostics/canaries that need a
+    failed run's empty output and sidecar.
 
     `remote_api_error` is auto-derived (OR'd with whatever the caller
     passed) from `tickers_completed`/`failed_tickers`, the same way
@@ -177,6 +211,7 @@ def finish_run(
         return exit_code
 
     write_output(ratings, out_path, fmt)
+    output_sha256 = hashlib.sha256(Path(out_path).read_bytes()).hexdigest()
     write_meta(
         out_path,
         status=status,
@@ -188,5 +223,6 @@ def finish_run(
         rating_count=len(ratings),
         started_at=started_at,
         extra=extra_meta,
+        output_sha256=output_sha256,
     )
     return exit_code

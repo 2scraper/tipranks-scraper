@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   offline:
     name: offline checks (py${{ matrix.python-version }})
@@ -35,6 +38,10 @@ jobs:
           done
       - name: No committed credentials (direct run, not only via smoke_test.py)
         run: python3 .github/ci_checks.py
+      - name: Build the distributable wheel
+        run: |
+          pip install build
+          python -m build --wheel
 
   docker:
     name: docker image builds, runs, and launches Chromium

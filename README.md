@@ -1,5 +1,6 @@
 # TipRanks Scraper
 
+![release](https://img.shields.io/github/v/release/2scraper/tipranks-scraper)
 ![tests](https://github.com/2scraper/tipranks-scraper/actions/workflows/tests.yml/badge.svg)
 ![canary](https://github.com/2scraper/tipranks-scraper/actions/workflows/canary.yml/badge.svg)
 ![python](https://img.shields.io/badge/python-3.9%2B-blue)
@@ -103,8 +104,10 @@ distinct from `4`, where the site was reachable and simply had nothing to
 return for a ticker (a confirmed 404/400).
 
 A zero-result run writes neither `--out` nor its `.meta.json` sidecar
-unless `--allow-empty` is passed, so a failed run never overwrites a
-previous good result. An unknown ticker (real 404/400 from the site) is
+unless `--allow-empty` is passed, so it does not overwrite a previous good
+result by default. Output and sidecar are replaced atomically and new
+sidecars carry an output checksum that `diff_runs.py` verifies. An unknown
+ticker (real 404/400 from the site) is
 recorded as a *completed* ticker that contributed zero rows, not a
 failure — only a network/navigation error counts against the run.
 
@@ -137,8 +140,10 @@ tickers and 35+ requests, all clean 200s, no CAPTCHA, no 429. No
 DataDome/PerimeterX/Akamai/Imperva/Kasada/Arkose Labs signature was found
 either. That's "not observed to challenge this traffic," not "confirmed
 unprotected" — there's no known solvable challenge to wire up here
-because none was ever presented. See `.github/workflows/canary.yml` for
-how the daily live check treats a possible block from a datacentre IP.
+because none was presented in that research session. A later audit did
+observe a real 403/429-class block, which the scraper now reports as exit 3.
+The daily live canary fails on that outcome so its green badge means data was
+actually collected, rather than only that the CLI did not crash.
 
 ## Engine notes
 
@@ -148,7 +153,8 @@ how the daily live check treats a possible block from a datacentre IP.
   `selenium_scraper.py` detects a not-found page via the confirmed real
   title string (`"Error 404: Page Not Found"`) instead — a documented,
   named difference, not a silent gap.
-- **Puppeteer**: confirmed live on a real Apple Silicon Mac — pyppeteer's
+- **Puppeteer (legacy/experimental)**: pyppeteer is effectively unmaintained.
+  Confirmed live on a real Apple Silicon Mac — pyppeteer's
   own bundled Chromium download (pinned at revision 117.0.5938.0)
   launches but then segfaults on an actual headless run. Playwright's and
   Selenium's own browser/driver downloads were unaffected on the same

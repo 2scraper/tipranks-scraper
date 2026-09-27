@@ -22,8 +22,8 @@ and price target straight into JSON or CSV.
   never merged into one
 - Price target average/high/low/upside, buy/hold/sell counts, a
   best-effort current price
-- JSON and CSV export, with a documented `TickerRating` schema and a
-  `.meta.json` sidecar on every completed/partial run
+- JSON and CSV export, with a documented `TickerRating` schema, atomic file
+  replacement, and a checksummed `.meta.json` sidecar
 - robots.txt honoured, re-checked from the real captured text at
   runtime rather than a hardcoded conclusion
 - **No credentials of any kind.** No proxy, no API key, no CDP endpoint,
@@ -34,12 +34,10 @@ and price target straight into JSON or CSV.
 **Bot protection.** tipranks.com sits behind Fastly (caching) and
 Cloudflare (a bot-management fingerprinting script loads on every page
 view, and Google reCAPTCHA's script is present but never auto-rendered).
-Neither ever actually challenged a request in this project's own
-research — roughly 15 distinct tickers and 30+ requests, all clean
-200s, no CAPTCHA, no 429. That's "not observed to challenge this
-traffic," not "confirmed unprotected" — there is no known solvable
-challenge to wire up here, because none was ever presented. See
-`tipranks_parser.py`'s module docstring for the full detail.
+Neither challenged the original research session, but a later audit observed
+a real 403/429-class block. The scraper reports that state as exit 3 and the
+daily live canary treats it as unavailable rather than leaving a misleading
+green badge. See `tipranks_parser.py`'s module docstring for the full detail.
 
 ## Who this is for
 
