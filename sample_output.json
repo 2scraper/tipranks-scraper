@@ -1,0 +1,32 @@
+[
+  {
+    "ticker": "AAPL",
+    "source": "tipranks",
+    "source_url": "https://www.tipranks.com/stocks/aapl/stock-analysis",
+    "scraped_at": "2026-09-27T09:37:57+00:00",
+    "company_name": "Apple",
+    "currency": "USD",
+    "smart_score": 7,
+    "smart_score_updated": "2026-09-27T00:00:00.000Z",
+    "consensus_rating_id": "moderateBuy",
+    "consensus_rating_label": "Moderate Buy",
+    "analyst_count": 30,
+    "buy_count": 15,
+    "hold_count": 11,
+    "sell_count": 4,
+    "price_target_average": 334.8982608695652,
+    "price_target_high": 400,
+    "price_target_low": 245,
+    "price_target_upside": -0.01809522716871903,
+    "best_consensus_rating_id": "moderateBuy",
+    "best_consensus_rating_label": "Moderate Buy",
+    "best_analyst_count": 23,
+    "best_buy_count": 12,
+    "best_hold_count": 8,
+    "best_sell_count": 3,
+    "best_price_target_average": 334.8623529411765,
+    "current_price": 319.97,
+    "current_price_asof": "2026-08-31T14:10:19.000Z",
+    "current_price_source": "open"
+  }
+]
