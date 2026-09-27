@@ -6,6 +6,26 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-27
+
+### Fixed
+
+- **Docker image was broken**: this was the first time `docker build`
+  had ever actually been run (previously only checked statically by
+  `smoke_test.py`), and CI's own `docker` job failed immediately. Two
+  causes, both in the Dockerfile's `COPY` list: `diff_runs.py` had never
+  been copied into the image at all, so its own two tests failed with
+  `ModuleNotFoundError` inside the build; separately, a new smoke-test
+  check (added in 0.2.0) read `pyproject.toml`/`CHANGELOG.md` to cross-
+  check the version against the changelog, but neither file is ever
+  `COPY`'d into the image (deliberately — they're contributor metadata,
+  not something the shipped image needs), so it failed with a bare
+  `FileNotFoundError` instead of skipping. `diff_runs.py` is now in the
+  `COPY` list (it's shipped, family-shared functionality per CLAUDE.md
+  Sec.7, not test-only); the version/changelog check now skips cleanly
+  when either file is absent, the same way the credential-scanner check
+  already did.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
@@ -138,6 +158,7 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/2scraper/tipranks-scraper/releases/tag/v0.1.0

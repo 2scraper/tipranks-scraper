@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tipranks-scraper"
-version = "0.2.0"
+version = "0.2.1"
 description = "tipranks.com stock ticker forecast scraper (Playwright, Selenium, or Puppeteer) — Smart Score, analyst consensus, price target, free public data, no login"
 readme = "README.md"
 requires-python = ">=3.9"
