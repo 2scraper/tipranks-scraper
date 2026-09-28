@@ -1,4 +1,12 @@
-# Family-shared base requirements. Currently empty: this repo's only
-# dependency is the engine driver itself (requirements-playwright.txt),
-# since the free/public ticker-page data needs no proxy, captcha-solving,
-# or fingerprint client.
+# Family-shared base requirements. Until 2026-09-28 this file was empty:
+# the free/public ticker-page data needed no proxy, captcha-solving, or
+# fingerprint client at all. `requests` is now a real dependency —
+# scraper_api_client.py's 2Captcha calls and fingerprint_client.py's
+# Fingerprint API call both use it — added alongside --proxy/--cdp-
+# endpoint/--fingerprint/--twocaptcha-key/--scraper-api after a real
+# Cloudflare block was observed in a pre-release audit (CHANGELOG.md
+# 0.2.0). `python-dotenv` is NOT listed here on purpose: env_config.py's
+# own `.env` loader falls back to a small hand-rolled parser when it
+# isn't installed (see that module's docstring) — a real dependency for a
+# convenience, not a hard requirement of a normal run.
+requests>=2.31

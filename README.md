@@ -6,14 +6,19 @@
 ![python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 ![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-informational)
-![no-credentials](https://img.shields.io/badge/credentials-none%20needed-success)
+![credentials-optional](https://img.shields.io/badge/credentials-optional-blue)
 
 Scrapes one thing from tipranks.com: a stock ticker's forecast-page
 snapshot — Smart Score, analyst consensus (Buy/Hold/Sell), and price
 target — from the site's free, unauthenticated data. No account, no
-login, no proxy, no captcha solving. Three engines (Playwright, Selenium,
-Puppeteer/pyppeteer) with an identical CLI, output schema and exit codes.
-JSON or CSV output.
+login required for a normal run — this repo is **local-first**: the
+default is a plain local headless Chromium against a free, public page,
+no proxy, no captcha-solving key. `--proxy`/`--cdp-endpoint`/
+`--fingerprint`/`--twocaptcha-key`/`--scraper-api` (added 2026-09-28,
+after a real Cloudflare block was observed — see "What's actually in
+front of the site" below) are opt-in mitigations, not a requirement.
+Three engines (Playwright, Selenium, Puppeteer/pyppeteer) with an
+identical CLI, output schema and exit codes. JSON or CSV output.
 
 ## What it reads
 
@@ -80,6 +85,80 @@ Flags, identical across all three:
 | `--allow-empty` | Write output even if every requested ticker came back empty. |
 | `--headed` | Launch a visible browser instead of headless (debugging). |
 | `--executable-path PATH` | Use an already-installed Chrome/Chromium instead of this engine's own bundled-browser download. Normally unnecessary — see Engine notes for the one confirmed case where it isn't. |
+| `--block-retries N` | On a blocked outcome, retry that ticker on the SAME browser/session this many extra times before giving up ("retry before you rotate"). Default 2. |
+
+### 2Captcha toolkit — opt-in, not required for a normal run
+
+Added 2026-09-28, after a real Cloudflare block was observed in a
+pre-release audit (see "What's actually in front of the site" below).
+**Unlike shein-scraper/g2-scraper, this repo has never observed an
+actual CAPTCHA widget** — the one real block seen was a Cloudflare
+"Just a moment..." JS interstitial (a browser-fingerprinting challenge a
+real browser normally clears on its own), not a confirmed Turnstile/
+hCaptcha/reCAPTCHA challenge. `captcha_solver.py`'s detection/solving is
+family-standard plumbing, shipped for parity and in case that changes —
+it may simply find nothing to solve here. `--proxy` (a fresh exit IP)
+and `--cdp-endpoint` (a managed device identity) are this repo's own
+evidence-backed mitigations for the block actually observed.
+
+`--proxy --proxy-file --proxy-shuffle --cdp-endpoint --fingerprint
+--fp-tags --fp-country --twocaptcha-key --captcha-api --solve-captcha
+--min-score --scraper-api --scraper-api-timeout --scraper-api-url
+--scraper-api-cdp --scraper-api-country --scraper-api-profile-id`
+
+Identical across all three engines (`smoke_test.py` checks the flag sets
+and the `--scraper-api-cdp` wiring never drift apart), with two named,
+documented exceptions:
+
+- **Selenium cannot authenticate a remote CDP session at all.**
+  `--cdp-endpoint` is refused outright (`EXIT_BAD_USAGE`) when it carries
+  credentials — the shape of 2Captcha's own Scraping Browser API
+  connection string — since chromedriver's `debuggerAddress` takes a
+  bare `host:port`. Use `playwright_scraper.py` or `puppeteer_scraper.py`
+  for that product. A bare, uncredentialed `--cdp-endpoint` (local
+  remote debugging) still works on Selenium.
+- **Selenium's `--proxy-server` cannot authenticate at all.** A `--proxy`
+  with a login/password has its credentials stripped before reaching
+  Chrome, with a logged warning — not silently dropped.
+
+**`--scraper-api`** sends one browserless HTTP call to 2Captcha's Scraper
+API (`scraper.2captcha.com`) instead of launching any local or
+`--cdp-endpoint` browser. Requires `--twocaptcha-key`/`TWOCAPTCHA_KEY`.
+**This repo's own divergence from shein-scraper/g2-scraper**: those
+siblings point the Scraper API at the rendered page and parse embedded
+state out of the returned HTML. This repo's parser instead needs the
+same-origin `stock-analysis/payload.json` JSON endpoint, normally
+fetched via an authenticated in-page `fetch()` call — the Scraper API
+can't run arbitrary page JS and hand back the result, so `--scraper-api`
+here fetches `payload.json` directly. **Whether that endpoint answers a
+fresh, cookie-less request the same way it answers the in-page fetch is
+a genuinely untested assumption** — see
+`playwright_scraper.py`'s `_fetch_one_via_scraper_api()` docstring and
+`TESTING.md`. `--headed`/`--executable-path`/`--proxy`/`--cdp-endpoint`/
+`--fingerprint` are all ignored in this mode (logged as a warning, not
+silently dropped) — a single static fetch per ticker has no browser
+session and brings its own exit IP/device.
+
+**`--scraper-api-cdp`** routes `--scraper-api`'s fetch through a 2Captcha
+Scraping Browser CDP session (their `cdpurl` field) instead of their own
+default pool, chaining two 2Captcha products together — this is what
+would give `--scraper-api` real captcha auto-solve and exit-country
+pinning, the same way `scraping_browser_connection_url()` already works
+for `--cdp-endpoint`. It never touches a caller-supplied
+`--cdp-endpoint` — that flag stays ignored in `--scraper-api` mode.
+**Wired and covered by `smoke_test.py` (structural + behavioral, with a
+faked Scraper API response), but not yet exercised against a real
+2Captcha/tipranks.com session** — see `CHANGELOG.md` and `TESTING.md`.
+
+**Scoping decision, stated plainly**: unlike shein-scraper/g2-scraper
+(fresh proxy per scroll round), this repo picks ONE proxy for the whole
+run and does not rotate mid-run — a per-ticker JSON fetch loop doesn't
+carry the volume that rotation was built for.
+
+Credentials belong in `.env` / `TIPRANKS_PROXY` / `TIPRANKS_CDP_ENDPOINT`
+/ `TWOCAPTCHA_KEY` — never as literal `--proxy`/`--cdp-endpoint`/
+`--twocaptcha-key` text on a shared or logged command line if you can
+avoid it. See `.env.example`.
 
 ## Output contract
 
@@ -90,7 +169,7 @@ Same exit codes across all three engines:
 | 0 | complete |
 | 1 | crashed |
 | 2 | bad usage (no tickers given, robots.txt disallows a path, ...) |
-| 3 | blocked (a real 403/429 — never observed live against this site, see below) |
+| 3 | blocked (a real 403/429, or the confirmed Cloudflare interstitial's own body/URL markers — see below) |
 | 4 | zero results |
 | 5 | remote API error (navigation/network failure) |
 | 6 | partial (some tickers failed, others succeeded) |
@@ -153,11 +232,21 @@ did not crash.
 ## Engine notes
 
 - **Playwright / Puppeteer** read the real HTTP status from the
-  navigation response to detect an unknown ticker (a real 404/400).
-- **Selenium**: chromedriver doesn't expose that status directly, so
-  `selenium_scraper.py` detects a not-found page via the confirmed real
-  title string (`"Error 404: Page Not Found"`) instead — a documented,
-  named difference, not a silent gap.
+  navigation response to detect an unknown ticker (a real 404/400), and
+  also check the confirmed Cloudflare block markers (`tipranks_parser.
+  BLOCK_URL_MARKERS`/`BLOCK_BODY_MARKERS`) against the navigation
+  response/URL. Both are also the only two engines that can open an
+  authenticated `--cdp-endpoint` session (e.g. the 2Captcha Scraping
+  Browser API) and arm its own `Captcha.setAutoSolve` CDP domain.
+- **Selenium**: chromedriver doesn't expose the navigation response's
+  HTTP status directly, so `selenium_scraper.py` detects a not-found page
+  via the confirmed real title string (`"Error 404: Page Not Found"`)
+  instead — a documented, named difference, not a silent gap. The same
+  status-blindness narrows (but doesn't close) its block detection: it
+  checks the same URL/body markers right after navigation, but can only
+  see a 403/429 on the in-page `payload.json` fetch, not the initial page
+  load. `--cdp-endpoint` is refused outright when it carries credentials
+  — see "2Captcha toolkit" above.
 - **Puppeteer (legacy/experimental)**: pyppeteer is effectively unmaintained.
   Confirmed live on a real Apple Silicon Mac — pyppeteer's
   own bundled Chromium download (pinned at revision 117.0.5938.0)
@@ -178,6 +267,15 @@ list and the live-testing checklist.
 
 ## Known limitations
 
+- No confirmed CAPTCHA widget on this site — `captcha_solver.py`'s
+  solving plumbing is shipped for family parity and may simply find
+  nothing to solve; see "2Captcha toolkit" above.
+- `--scraper-api` fetches `payload.json` directly instead of the
+  rendered page (unlike shein-scraper/g2-scraper); whether that endpoint
+  answers a fresh, cookie-less request the way it answers the in-page
+  fetch is untested — see "2Captcha toolkit" above.
+- `--scraper-api-cdp` is wired and unit-tested but not yet exercised
+  against a real 2Captcha/tipranks.com session.
 - Only the ticker forecast page. No screener/stock-list pages, no
   insider-trading pages, no hedge fund activity pages — all real
   sections of the same site, out of scope here.

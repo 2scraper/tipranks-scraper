@@ -4,12 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tipranks-scraper"
-version = "0.2.1"
+version = "0.3.0"
 description = "tipranks.com stock ticker forecast scraper (Playwright, Selenium, or Puppeteer) — Smart Score, analyst consensus, price target, free public data, no login"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
-dependencies = []
+dependencies = [
+    "requests>=2.31",
+]
 
 [project.optional-dependencies]
 playwright = ["playwright>=1.45"]
@@ -29,6 +31,11 @@ py-modules = [
     "output_writer",
     "diff_runs",
     "tipranks_parser",
+    "env_config",
+    "proxy_pool",
+    "captcha_solver",
+    "fingerprint_client",
+    "scraper_api_client",
     "playwright_scraper",
     "selenium_scraper",
     "puppeteer_scraper",

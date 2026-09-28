@@ -121,13 +121,14 @@
 
   <div class="hero">
     <div class="eyebrow">Open-source stock ticker forecast data</div>
-    <h1>Free, public data.<br>No <span class="accent">login</span>, no proxy, no captcha solving.</h1>
+    <h1>Free, public data.<br>No <span class="accent">login</span>, no credentials required.</h1>
     <p class="sub">
       Open-source scraper for a tipranks.com stock ticker's forecast page.
       Three engines, one documented output schema — Smart Score, the
       analyst consensus (Buy/Hold/Sell), and the price target, straight
-      from the page's own JSON API. Nothing else needed: this data has no
-      credential model at all.
+      from the page's own JSON API. Local-first by default; an opt-in
+      2Captcha toolkit (proxy, CDP session, Scraper API) is there for
+      when the site pushes back.
     </p>
 
     <div class="signature">
@@ -202,7 +203,10 @@
       successfully — behavior-triggered, not a first-request block. The
       scraper reports that state as exit 3 and the daily live canary
       treats it as unavailable rather than leaving a misleading green
-      badge.
+      badge. No confirmed CAPTCHA widget has ever been found on this
+      site — <code>--proxy</code>/<code>--cdp-endpoint</code> (a 2Captcha
+      toolkit, opt-in, added after this block was observed) are this
+      project's own evidence-backed mitigations, not a confirmed bypass.
       See <code>tipranks_parser.py</code>'s module docstring for the
       full detail.
     </div>
@@ -212,7 +216,7 @@
     <div class="section-eyebrow">Check out</div>
     <h2>Get started</h2>
     <div class="codebox">
-<span class="cmt"># clone and install — no .env, no credentials needed</span><br>
+<span class="cmt"># clone and install — no .env, no credentials needed for a normal run</span><br>
 <span class="cmd">git clone https://github.com/2scraper/tipranks-scraper.git</span><br>
 <span class="cmd">cd tipranks-scraper &amp;&amp; pip install -r requirements-playwright.txt &amp;&amp; playwright install chromium</span><br><br>
 <span class="cmt"># one ticker, or several</span><br>

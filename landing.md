@@ -1,6 +1,6 @@
 # TipRanks Scraper by 2scraper
 
-**Open-source stock-ticker forecast scraper for tipranks.com — three engines, free public data, no login, no proxy, no captcha solving.**
+**Open-source stock-ticker forecast scraper for tipranks.com — three engines, free public data, no login, no credentials required for a normal run.**
 
 Pull a stock ticker's Smart Score, analyst consensus (Buy/Hold/Sell),
 and price target straight into JSON or CSV.
@@ -26,8 +26,13 @@ and price target straight into JSON or CSV.
   replacement, and a checksummed `.meta.json` sidecar
 - robots.txt honoured, re-checked from the real captured text at
   runtime rather than a hardcoded conclusion
-- **No credentials of any kind.** No proxy, no API key, no CDP endpoint,
-  no `.env` — this ticker page is free, public data
+- **Local-first, no credentials required.** The default run is a plain
+  local headless Chromium against free, public data — no proxy, no API
+  key, no CDP endpoint, no `.env`
+- **Opt-in 2Captcha toolkit**, added after a real block was observed:
+  `--proxy`, `--cdp-endpoint` (the Scraping Browser API), `--fingerprint`,
+  and `--scraper-api`/`--scraper-api-cdp` — same toolkit as this
+  project's other 2scraper family members
 
 ## Honest about one thing
 
@@ -40,8 +45,11 @@ moment...") on the page navigation, in a local headless Playwright run,
 after an earlier run had already completed successfully — behavior-
 triggered, not a first-request block. The scraper reports that state as
 exit 3 and the daily live canary treats it as unavailable rather than
-leaving a misleading green badge. See `tipranks_parser.py`'s module
-docstring for the full detail.
+leaving a misleading green badge. No confirmed CAPTCHA widget has ever
+been found on this site — `--proxy`/`--cdp-endpoint` are this project's
+own evidence-backed mitigations for the block actually observed, not a
+confirmed bypass. See `tipranks_parser.py`'s module docstring for the
+full detail.
 
 ## Who this is for
 

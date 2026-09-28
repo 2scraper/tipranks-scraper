@@ -6,6 +6,81 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-28
+
+### Added
+
+- **The full 2Captcha toolkit, ported from shein-scraper/g2-scraper**:
+  `--proxy`/`--proxy-file`/`--proxy-shuffle`, `--cdp-endpoint`,
+  `--fingerprint`/`--fp-tags`/`--fp-country`, `--twocaptcha-key`/
+  `--captcha-api`/`--solve-captcha`/`--min-score`, and `--scraper-api`/
+  `--scraper-api-timeout`/`--scraper-api-url`/`--scraper-api-cdp`/
+  `--scraper-api-country`/`--scraper-api-profile-id`, identical across
+  all three engines (CLAUDE.md §4). New shared modules `env_config.py`,
+  `proxy_pool.py`, `captcha_solver.py`, `fingerprint_client.py`,
+  `scraper_api_client.py`, and a new `.env.example`.
+  **Why, stated plainly**: unlike every other family member, this repo
+  shipped 0.1.0-0.2.1 with zero 2Captcha products — the ticker forecast
+  page is free, public, unauthenticated data, and no block had ever been
+  observed. A pre-release audit (see 0.2.0's own canary-tightening entry)
+  then hit a real one: an HTTP 403 Cloudflare "Just a moment..." JS
+  challenge, carrying a `__cf_chl_rt_tk` URL token, fired after an
+  earlier successful run in the same session (a behavior/volume-
+  triggered challenge, not a flat rate limit). `tipranks_parser.py` now
+  exposes this as two confirmed markers, `BLOCK_BODY_MARKERS`/
+  `BLOCK_URL_MARKERS`, checked by every engine's fetch function and its
+  `--scraper-api` path.
+  **What this addition is NOT**: a confirmed CAPTCHA fix. No Cloudflare
+  Turnstile, hCaptcha, or other known solvable widget script has ever
+  been found in any capture from this site — see `captcha_solver.py`'s
+  module docstring for the honesty caveat this carries. `--proxy` and
+  `--cdp-endpoint` (a fresh exit IP / a managed device identity) are
+  this repo's own evidence-backed mitigations; the captcha-detection/
+  solving plumbing is family-standard code that may simply find nothing
+  to solve here, and is shipped anyway for parity and in case that
+  changes.
+  **`--scraper-api`'s own divergence from shein-scraper/g2-scraper**:
+  those siblings point the Scraper API at the rendered page and parse
+  embedded state out of the HTML it returns. This repo's parser instead
+  needs the same-origin `stock-analysis/payload.json` JSON endpoint,
+  normally fetched via an in-page, cookie-carrying `fetch()` call — the
+  Scraper API can't run arbitrary page JS and hand back the result, so
+  `--scraper-api` here fetches `payload.json` directly instead. Whether
+  that endpoint answers a fresh, cookie-less request the same way it
+  answers the in-page authenticated fetch is a genuinely untested
+  assumption, stated plainly in `_fetch_one_via_scraper_api()`'s own
+  docstring — confirm live before relying on it (TESTING.md).
+  **Selenium's own standing CLAUDE.md §6 limits apply here too**:
+  `--cdp-endpoint` is refused outright (`EXIT_BAD_USAGE`) when it carries
+  credentials (chromedriver cannot authenticate a remote CDP session);
+  `--proxy` credentials are stripped before reaching Chrome's
+  `--proxy-server`, with a warning, not silently dropped.
+  **Scoping decision, stated plainly**: unlike shein-scraper/g2-scraper
+  (which rotate to a fresh proxy per scroll round), this repo picks ONE
+  proxy for the whole run and does not rotate mid-run — a per-ticker JSON
+  fetch loop doesn't carry the volume that rotation was built for, and
+  the added complexity has no evidence yet that it's needed here.
+- `requests` is now a real dependency (`requirements.txt`) — 2Captcha's
+  API and the Scraper API both need it. `python-dotenv` stays optional
+  (`env_config.py` falls back to a small hand-rolled `.env` parser).
+- 18 new `smoke_test.py` checks (30 → 48): `env_config.ENV_KEYS` against
+  `.env.example` in both directions, placeholder/precedence behavior,
+  proxy parsing/masking/redaction, `scraper_api_client` key/override
+  handling, `--scraper-api-cdp` requiring `--scraper-api` (structural and
+  behavioral, via a faked `TwoCaptchaClient.scrape_url` across all three
+  engines), confirmation that `--scraper-api` fetches `payload.json` (not
+  the rendered page), a real-fixture round-trip through `--scraper-api`
+  to `EXIT_OK`, a Cloudflare-marker body correctly reaching
+  `EXIT_BLOCKED` via `--scraper-api`, `_maybe_solve_captcha`'s no-op
+  contract, `--block-retries`, Selenium's credentialed-`--cdp-endpoint`
+  refusal, and the block-marker helpers themselves.
+- Credential scanner (`.github/ci_checks.py`) upgraded from "no real
+  credential model" to the same one shein-scraper/g2-scraper use,
+  including their two already-fixed false-positive classes (an
+  unanchored `openai_key` pattern; a Python type-hint token like
+  `api_key: Optional[str]` colliding with the unquoted secret-assignment
+  pattern) ported in rather than rediscovered here.
+
 ## [0.2.1] - 2026-09-27
 
 ### Fixed
@@ -158,7 +233,8 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/2scraper/tipranks-scraper/releases/tag/v0.1.0
