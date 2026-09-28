@@ -168,6 +168,22 @@ from typing import Any, Dict, List, Optional
 BASE_URL = "https://www.tipranks.com"
 TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,31}$")
 
+# The ONLY real block this repo has ever observed (see the module
+# docstring's "A later pre-release audit" note above, and CHANGELOG.md
+# 0.2.0): an HTTP 403 with body text "Just a moment..." AND a final,
+# post-redirect URL carrying Cloudflare's `__cf_chl_rt_tk` query
+# parameter — never a Cloudflare Turnstile/hCaptcha/reCAPTCHA-v2 widget,
+# none of which has ever been seen here (unlike shein.com/g2.com's
+# siblings). Kept as two SEPARATE constants, not one combined list,
+# because they were confirmed in two different places, not one: the
+# marker text is in the response BODY, `__cf_chl_rt_tk` is in the final
+# URL after Cloudflare's own redirect, not confirmed to also appear
+# anywhere in that response's HTML — folding both into one `extra_
+# markers` list handed to `captcha_solver.detect_from_html(body, ...)`
+# would silently just never match on the URL half. Added 2026-09-28.
+BLOCK_BODY_MARKERS = ("just a moment",)
+BLOCK_URL_MARKERS = ("__cf_chl_rt_tk",)
+
 # Verbatim capture of https://www.tipranks.com/robots.txt (single
 # `User-agent: *` group). Kept as a literal string, not a hand-written
 # summary, so `is_allowed()` re-derives the answer from the real rules

@@ -4,11 +4,16 @@
 Only paths and rule names are printed. A suspicious value is never echoed
 back into a CI log, because an exception/report is a credential leak too.
 
-This repo has no proxy/API-key/CDP credential model at all (see
-SECURITY.md) — the ticker forecast page is free, public data. This
-scanner is kept anyway, as defense-in-depth against something accidental
-(a real token pasted into a commit message or a debug print), not because
-this repo's own code carries a credential model to protect.
+**Updated 2026-09-28**: this repo now DOES carry a real credential model
+— a 2Captcha API key, TIPRANKS_PROXY, TIPRANKS_CDP_ENDPOINT (all read
+only through env_config.py, per CLAUDE.md §3/§17) — added alongside
+--proxy/--cdp-endpoint/--twocaptcha-key/--scraper-api after a real
+Cloudflare block was observed (CHANGELOG.md 0.2.0). Adapted from
+shein-scraper's/g2-scraper's own scanner rather than written from
+scratch, including their two confirmed false-positive fixes below
+(the unanchored openai_key pattern, and the Python-type-hint collision
+in SECRET_ASSIGNMENT's unquoted alternative) — no reason to rediscover
+either the hard way here.
 """
 from __future__ import annotations
 
@@ -21,17 +26,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ALLOWLIST = {
     ".github/ci_checks.py",  # contains the detector patterns themselves
+    ".env.example",  # documents placeholder credentials verbatim, on purpose (CLAUDE.md Sec.17)
+    "smoke_test.py",  # deliberate credential-shaped masking/redaction test fixtures
 }
 
 TOKEN_RULES = {
     "private_key": re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
     "github_token": re.compile(r"(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"),
     "aws_access_key": re.compile(r"AKIA[0-9A-Z]{16}"),
-    "openai_key": re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    "openai_key": re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),
 }
 URL_CREDENTIALS = re.compile(r"\b(?:https?|wss?)://([^\s/@:]+):([^\s/@]+)@", re.I)
 SECRET_ASSIGNMENT = re.compile(
-    r"\b(?:api[_-]?key|CLAUDE_CODE_OAUTH_TOKEN)\s*(?:=|:)\s*"
+    r"\b(?:api[_-]?key|twocaptcha[_-]?key|TWOCAPTCHA_KEY|TIPRANKS_PROXY|"
+    r"TIPRANKS_CDP_ENDPOINT|CLAUDE_CODE_OAUTH_TOKEN)"
+    r"\s*(?:=|:)\s*"
     r"(?:(['\"])([^'\"]{8,})\1|([^\s#'\"]{8,}))",
     re.I,
 )
@@ -95,6 +104,27 @@ def is_placeholder(user: str, password: str) -> bool:
     return bool((_words(user) | _words(password)) & _PLACEHOLDER_WORD_SET)
 
 
+_TYPE_HINT_RE = re.compile(
+    r"^(?:Optional|Union|List|Dict|Tuple|Set|FrozenSet|Callable|Any|"
+    r"str|int|float|bool|bytes|dict|list|tuple|set|None)\b"
+)
+
+
+def _looks_like_type_hint(value: str) -> bool:
+    """True when an *unquoted* SECRET_ASSIGNMENT match is actually a
+    Python type annotation, not a value. `api_key: Optional[str]` in a
+    function signature (this repo's own scraper_api_client.py has one)
+    matches the same `NAME\\s*(?::|=)\\s*<value>` shape a real
+    `TIPRANKS_PROXY: some-value` config line would (the `:` case exists
+    to catch YAML/env-style assignments), and Python parameter names
+    routinely happen to be exactly the words this scanner watches for
+    (`api_key`, ...). Checked ONLY for the unquoted alternative — a real
+    secret is never legitimately written as an unquoted Python expression
+    starting with a typing keyword. Ported from shein-scraper's/
+    g2-scraper's own fix for the identical false positive."""
+    return bool(_TYPE_HINT_RE.match(value))
+
+
 def scan() -> list[tuple[str, int, str]]:
     findings: list[tuple[str, int, str]] = []
     for relative in repository_files():
@@ -113,6 +143,8 @@ def scan() -> list[tuple[str, int, str]]:
                 if not is_placeholder(match.group(1), match.group(2)):
                     findings.append((relative, line_no, "credentialed_url"))
             for match in SECRET_ASSIGNMENT.finditer(line):
+                if match.group(3) and _looks_like_type_hint(match.group(3)):
+                    continue
                 value = match.group(2) or match.group(3)
                 if not is_placeholder(value, value):
                     findings.append((relative, line_no, "secret_assignment"))
