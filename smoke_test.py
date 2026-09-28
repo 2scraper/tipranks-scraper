@@ -477,6 +477,281 @@ def _():
 
 
 # --------------------------------------------------------------------------- #
+# 2Captcha toolkit (env_config, proxy_pool, captcha_solver,
+# scraper_api_client) — added 2026-09-28, ported from shein-scraper/
+# g2-scraper after a real Cloudflare block was observed (CHANGELOG.md
+# 0.2.0). See playwright_scraper.py's own module docstring for why: a
+# real block, not a confirmed CAPTCHA widget.
+# --------------------------------------------------------------------------- #
+import env_config
+import proxy_pool as _proxy_pool
+import scraper_api_client
+
+
+@check("env_config.ENV_KEYS matches .env.example exactly, in both directions")
+def _():
+    # Guarded like the credential-scanner/sample_output/pyproject checks
+    # below: the Docker image's own COPY list deliberately never includes
+    # .env.example (contributor-facing documentation, not something the
+    # shipped image needs — see Dockerfile), so this must skip rather
+    # than crash there. Confirmed live: this exact unguarded-read shape
+    # broke the Docker build for the pyproject/changelog check in 0.2.1
+    # before that one got the same fix.
+    example_path = ROOT / ".env.example"
+    if not example_path.exists():
+        return
+    example = example_path.read_text(encoding="utf-8")
+    documented = {line.split("=", 1)[0] for line in example.splitlines() if "=" in line and not line.startswith("#")}
+    assert documented == set(env_config.ENV_KEYS), (documented, set(env_config.ENV_KEYS))
+
+
+@check("env_config uses TWOCAPTCHA_KEY/TIPRANKS_ prefixed keys only, not a leftover other-site name")
+def _():
+    for key in env_config.ENV_KEYS:
+        assert key == "TWOCAPTCHA_KEY" or key.startswith("TIPRANKS_"), f"unexpected env key {key!r}"
+
+
+@check("env_config._is_placeholder treats a braced {...} fragment as unset")
+def _():
+    assert env_config._is_placeholder("")
+    assert env_config._is_placeholder(None)
+    assert env_config._is_placeholder(
+        "ws://{login}-zone-scraping_browser-country-{cc}-pid-{profileId}:{password}@cb.2captcha.com:9222"
+    )
+    assert not env_config._is_placeholder("a-real-looking-value-123")
+
+
+@check("env_config.apply_env never overrides an explicitly-set CLI flag")
+def _():
+    import argparse
+    import os as _os
+
+    ns = argparse.Namespace(proxy="http://explicit:pass@host:1")
+    _os.environ["TIPRANKS_PROXY"] = "http://from-env:pass@host:2"
+    try:
+        env_config.apply_env(ns, dotenv_path="/nonexistent/.env")
+        assert ns.proxy == "http://explicit:pass@host:1"
+    finally:
+        del _os.environ["TIPRANKS_PROXY"]
+
+
+@check("proxy_pool rejects a malformed proxy string with ProxyParseError")
+def _():
+    try:
+        _proxy_pool.parse_proxy_line("not a proxy")
+    except _proxy_pool.ProxyParseError:
+        pass
+    else:
+        raise AssertionError("malformed proxy line was accepted")
+
+
+@check("proxy_pool parses a credentialed proxy and masks the password (not the login) in logs")
+def _():
+    proxy = _proxy_pool.parse_proxy_line("http://user1234:pass5678@1.2.3.4:8080")
+    assert proxy.host == "1.2.3.4"
+    assert proxy.port == 8080
+    assert proxy.has_auth
+    masked = proxy.masked()
+    assert "pass5678" not in masked
+    assert "user1234" in masked
+
+
+@check("proxy_pool.redact_credentials strips login:password out of an arbitrary string (an exception message is a log — CLAUDE.md §8)")
+def _():
+    text = "connect_over_cdp failed: ws://realuser:realpass1234@cb.2captcha.com:9222 timed out"
+    redacted = _proxy_pool.redact_credentials(text)
+    assert "realuser" not in redacted
+    assert "realpass1234" not in redacted
+
+
+@check("scraper_api_client.TwoCaptchaClient._require_key rejects a missing/empty key")
+def _():
+    client = scraper_api_client.TwoCaptchaClient(None)
+    try:
+        client._require_key()
+    except scraper_api_client.TwoCaptchaAuthError:
+        pass
+    else:
+        raise AssertionError("missing key was accepted")
+
+
+@check("scraper_api_client honors --captcha-api/--scraper-api-url overrides, not the module-level defaults")
+def _():
+    client = scraper_api_client.TwoCaptchaClient(
+        "fake-key", api_base="https://mock.example/api", scraper_api_base="https://mock.example/scraper",
+    )
+    assert client.api_base == "https://mock.example/api"
+    assert client.scraper_api_base == "https://mock.example/scraper"
+
+
+@check("all three engines define --scraper-api-cdp/--scraper-api-country/--scraper-api-profile-id, and pass cdp_url through to scraper_api_client.scrape_url (2026-09-28 port from shein-scraper/g2-scraper)")
+def _():
+    for path in ("playwright_scraper.py", "selenium_scraper.py", "puppeteer_scraper.py"):
+        src = (ROOT / path).read_text(encoding="utf-8")
+        assert '"--scraper-api-cdp"' in src, f"{path}: no --scraper-api-cdp flag"
+        assert '"--scraper-api-country"' in src, f"{path}: no --scraper-api-country flag"
+        assert '"--scraper-api-profile-id"' in src, f"{path}: no --scraper-api-profile-id flag"
+        assert "cdp_url=cdp_url" in src, f"{path}: the scraper-api fetch path is not called with cdp_url"
+        assert "scraping_browser_connection_url(" in src, f"{path}: --scraper-api-cdp never builds a Scraping Browser URL"
+        assert "--scraper-api-cdp requires --scraper-api" in src, f"{path}: --scraper-api-cdp isn't guarded to require --scraper-api"
+
+
+@check("BEHAVIORAL proof, all three engines: --scraper-api-cdp actually builds a country/profile-pinned Scraping Browser URL and it reaches scraper_api_client.scrape_url's cdp_url argument; without the flag cdp_url stays None; --scraper-api-cdp without --scraper-api is EXIT_BAD_USAGE, not a silent no-op")
+def _():
+    import output_writer as ow
+
+    for mod in ENGINE_MODULES:
+        captured = {}
+        original = scraper_api_client.TwoCaptchaClient.scrape_url
+
+        def _fake_scrape_url(self, url, *, data_format="raw", timeout=60, wait_for=None, cdp_url=None):
+            captured["cdp_url"] = cdp_url
+            return scraper_api_client.ScrapeResult(target_status=200, headers={}, body='{"models": {"stocks": []}}')
+
+        scraper_api_client.TwoCaptchaClient.scrape_url = _fake_scrape_url
+        try:
+            # --scraper-api-cdp without --scraper-api: EXIT_BAD_USAGE, before
+            # any network-shaped call is made.
+            rc = mod.main(["--ticker", "AAPL", "--scraper-api-cdp"])
+            assert rc == ow.EXIT_BAD_USAGE, f"{mod.__name__}: got {rc}"
+
+            with tempfile.TemporaryDirectory() as td:
+                mod.main([
+                    "--ticker", "AAPL",
+                    "--twocaptcha-key", "fake-key-for-test-only",
+                    "--scraper-api", "--scraper-api-cdp",
+                    "--scraper-api-country", "us", "--scraper-api-profile-id", "smoke-test-profile",
+                    "--out", str(Path(td) / "out.json"), "--allow-empty",
+                ])
+            cdp_url = captured.get("cdp_url")
+            assert cdp_url, f"{mod.__name__}: --scraper-api-cdp did not produce a cdp_url"
+            assert "-country-us" in cdp_url, f"{mod.__name__}: cdp_url missing requested country: {cdp_url!r}"
+            assert "-pid-smoke-test-profile" in cdp_url, f"{mod.__name__}: cdp_url missing requested profile id: {cdp_url!r}"
+
+            captured.clear()
+            with tempfile.TemporaryDirectory() as td:
+                mod.main([
+                    "--ticker", "AAPL",
+                    "--twocaptcha-key", "fake-key-for-test-only",
+                    "--scraper-api",
+                    "--out", str(Path(td) / "out.json"), "--allow-empty",
+                ])
+            assert captured.get("cdp_url") is None, f"{mod.__name__}: cdp_url should be None without --scraper-api-cdp, got {captured.get('cdp_url')!r}"
+        finally:
+            scraper_api_client.TwoCaptchaClient.scrape_url = original
+
+
+@check("--scraper-api fetches ticker_payload_url() directly (the JSON endpoint), not the rendered page — this repo's own deliberate divergence from shein-scraper/g2-scraper, see _fetch_one_via_scraper_api's docstring")
+def _():
+    original = scraper_api_client.TwoCaptchaClient.scrape_url
+    captured = {}
+
+    def _fake_scrape_url(self, url, *, data_format="raw", timeout=60, wait_for=None, cdp_url=None):
+        captured["url"] = url
+        return scraper_api_client.ScrapeResult(target_status=200, headers={}, body='{"models": {"stocks": []}}')
+
+    scraper_api_client.TwoCaptchaClient.scrape_url = _fake_scrape_url
+    try:
+        for mod in ENGINE_MODULES:
+            captured.clear()
+            with tempfile.TemporaryDirectory() as td:
+                mod.main([
+                    "--ticker", "AAPL", "--twocaptcha-key", "fake-key-for-test-only", "--scraper-api",
+                    "--out", str(Path(td) / "out.json"), "--allow-empty",
+                ])
+            assert captured.get("url", "").endswith("/stocks/aapl/stock-analysis/payload.json"), \
+                f"{mod.__name__}: {captured.get('url')!r}"
+    finally:
+        scraper_api_client.TwoCaptchaClient.scrape_url = original
+
+
+@check("every engine's --scraper-api mode actually parses a real payload and reports EXIT_OK when the fake fetch returns real fixture data")
+def _():
+    import output_writer as ow
+
+    original = scraper_api_client.TwoCaptchaClient.scrape_url
+    fixture_body = (FIXTURES / "tipranks_aapl_stock_analysis.json").read_text(encoding="utf-8")
+
+    def _fake_scrape_url(self, url, *, data_format="raw", timeout=60, wait_for=None, cdp_url=None):
+        return scraper_api_client.ScrapeResult(target_status=200, headers={}, body=fixture_body)
+
+    scraper_api_client.TwoCaptchaClient.scrape_url = _fake_scrape_url
+    try:
+        for mod in ENGINE_MODULES:
+            with tempfile.TemporaryDirectory() as td:
+                rc = mod.main([
+                    "--ticker", "AAPL", "--twocaptcha-key", "fake-key-for-test-only", "--scraper-api",
+                    "--out", str(Path(td) / "out.json"),
+                ])
+            assert rc == ow.EXIT_OK, f"{mod.__name__}: got {rc}"
+    finally:
+        scraper_api_client.TwoCaptchaClient.scrape_url = original
+
+
+@check("every engine's --scraper-api mode treats a Cloudflare block marker in the fetched body as blocked, not a clean empty result")
+def _():
+    import output_writer as ow
+
+    original = scraper_api_client.TwoCaptchaClient.scrape_url
+
+    def _fake_scrape_url(self, url, *, data_format="raw", timeout=60, wait_for=None, cdp_url=None):
+        return scraper_api_client.ScrapeResult(target_status=403, headers={}, body="<html><body>Just a moment...</body></html>")
+
+    scraper_api_client.TwoCaptchaClient.scrape_url = _fake_scrape_url
+    try:
+        for mod in ENGINE_MODULES:
+            rc = mod.main(["--ticker", "AAPL", "--twocaptcha-key", "fake-key-for-test-only", "--scraper-api"])
+            assert rc == ow.EXIT_BLOCKED, f"{mod.__name__}: got {rc}"
+    finally:
+        scraper_api_client.TwoCaptchaClient.scrape_url = original
+
+
+@check("every engine's _maybe_solve_captcha is a documented no-op when no client is configured or policy is 'off' — never raises, never touches the network")
+def _():
+    import asyncio as _asyncio
+
+    for mod in ENGINE_MODULES:
+        fn = mod._maybe_solve_captcha
+        kwargs = dict(client=None, ticker="AAPL", policy="when-blocked", min_score=0.3)
+        if mod is playwright_scraper:
+            fn(page=None, **kwargs)
+        elif mod is selenium_scraper:
+            fn(driver=None, **kwargs)
+        elif mod is puppeteer_scraper:
+            _asyncio.get_event_loop().run_until_complete(fn(page=None, **kwargs))
+        else:
+            raise AssertionError(f"unrecognised engine module {mod.__name__}")
+
+
+@check("every engine accepts --block-retries (default 2, matching the rest of the family)")
+def _():
+    for mod in ENGINE_MODULES:
+        args = mod.parse_args(["--ticker", "AAPL"])
+        assert args.block_retries == 2, mod.__name__
+        args = mod.parse_args(["--ticker", "AAPL", "--block-retries", "5"])
+        assert args.block_retries == 5, mod.__name__
+
+
+@check("selenium refuses a credentialed --cdp-endpoint outright (EXIT_BAD_USAGE) — chromedriver cannot authenticate a remote CDP session, unlike Playwright/Puppeteer (CLAUDE.md §6)")
+def _():
+    import output_writer as ow
+
+    rc = selenium_scraper.main([
+        "--ticker", "AAPL", "--cdp-endpoint", "ws://login:pass@cb.2captcha.com:9222",
+    ])
+    assert rc == ow.EXIT_BAD_USAGE, f"got {rc}"
+
+
+@check("playwright_scraper._looks_blocked / puppeteer_scraper._looks_blocked catch the confirmed-real Cloudflare markers (URL token or body text), independent of HTTP status")
+def _():
+    for mod in (playwright_scraper, puppeteer_scraper):
+        assert mod._looks_blocked(None, "https://x/?__cf_chl_rt_tk=abc", "") is True, mod.__name__
+        assert mod._looks_blocked(None, "https://x/", "Just a moment...") is True, mod.__name__
+        assert mod._looks_blocked(200, "https://x/", "") is False, mod.__name__
+        assert mod._looks_blocked(403, "https://x/", "") is True, mod.__name__
+
+
+# --------------------------------------------------------------------------- #
 # repository hygiene
 # --------------------------------------------------------------------------- #
 @check("no banned wording anywhere in the shipped repo")
@@ -519,7 +794,7 @@ def _():
     assert result.returncode == 0, f"ci_checks.py failed:\n{result.stdout}\n{result.stderr}"
 
 
-@check("credential scanner recognizes quoted and unquoted secret assignments")
+@check("credential scanner recognizes quoted and unquoted secret assignments, and does not flag a Python type-hint token as a secret")
 def _():
     import importlib.util
 
@@ -539,6 +814,15 @@ def _():
         f"{api_name}: {value}",
     ):
         assert module.SECRET_ASSIGNMENT.search(line), line
+    # Regression: `api_key: Optional[str]` in a function signature matches
+    # the same NAME(:|=)VALUE shape a real unquoted secret assignment
+    # would — this is exactly what scraper_api_client.py's __init__ looks
+    # like, and it must NOT be reported (see .github/ci_checks.py's own
+    # docstring for the incident this fixed: 29/30 before this guard).
+    hint_line = f"{api_name}: Optional[str]"
+    match = module.SECRET_ASSIGNMENT.search(hint_line)
+    assert match is not None  # the regex itself still matches the shape
+    assert module._looks_like_type_hint(match.group(3))
 
 
 @check("sample_output.{json,csv} match the TickerRating schema, if they exist yet")
