@@ -533,9 +533,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"crash: {exc}", file=sys.stderr)
             return EXIT_CRASH
     else:
-        if pyppeteer_launch is None:
-            print("error: pyppeteer is not installed", file=sys.stderr)
-            return EXIT_CRASH
+        # No `pyppeteer_launch is None` guard here on purpose — see
+        # selenium_scraper.py's identical comment at the equivalent spot.
+        # run_async() already raises RuntimeError("pyppeteer is not
+        # installed") for that case (checked above, inside run_async()),
+        # and run()'s own try/except already turns that into EXIT_CRASH.
+        # A pre-check here would run unconditionally, BEFORE run() is
+        # even called — breaking smoke_test.py's fake_run_* checks, which
+        # monkeypatch `run` itself to a fake that doesn't need a real
+        # driver at all. Confirmed live: this exact duplicate check only
+        # looked correct in a sandbox that happened to have pyppeteer
+        # installed; on a real machine without it, every fake-run check
+        # for this engine failed with EXIT_CRASH instead of exercising
+        # the fake at all.
 
         proxies = []
         try:

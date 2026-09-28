@@ -422,6 +422,48 @@ def _():
             mod.run = original
 
 
+@check("main() never short-circuits on 'driver not installed' BEFORE calling a monkeypatched "
+       "run() — regression test for a real gap found live on Roman's own machine 2026-09-28: "
+       "selenium_scraper.py/puppeteer_scraper.py briefly had a `webdriver is None`/"
+       "`pyppeteer_launch is None` guard placed directly in main(), which fired unconditionally, "
+       "before run() (or the fake replacing it) was ever called — the driver-not-installed check "
+       "belongs ONLY inside run() itself, same as playwright_scraper.py, so a caller that replaces "
+       "run() (this smoke test's own fake_run_* checks, or a real embedder) still gets called. This "
+       "was invisible in a sandbox that happened to have every engine driver installed — every "
+       "fake_run_* check above passed there while being silently short-circuited on a machine "
+       "without the drivers, which is exactly this suite's whole point (CLAUDE.md §6: 'no engine "
+       "driver installed at all'). Forces the driver symbol to None here, regardless of what is "
+       "actually installed in whatever environment runs this suite, so this can never again pass "
+       "for the wrong reason.")
+def _():
+    import output_writer as ow
+
+    driver_attr = {
+        playwright_scraper: "sync_playwright",
+        selenium_scraper: "webdriver",
+        puppeteer_scraper: "pyppeteer_launch",
+    }
+
+    def fake_run_all_blocked(tickers, **kwargs):
+        return [], [], list(tickers), list(tickers)
+
+    for mod in ENGINE_MODULES:
+        attr = driver_attr[mod]
+        original_driver = getattr(mod, attr)
+        original_run = mod.run
+        setattr(mod, attr, None)
+        mod.run = fake_run_all_blocked
+        try:
+            code = mod.main(["--ticker", "AAPL"])
+            assert code == ow.EXIT_BLOCKED, (
+                f"{mod.__name__}: got {code} with {attr}=None — main() short-circuited "
+                f"before calling the monkeypatched run(), instead of EXIT_BLOCKED (3)"
+            )
+        finally:
+            setattr(mod, attr, original_driver)
+            mod.run = original_run
+
+
 @check("a genuine partial run (one ticker succeeds, another fails with a plain "
        "remote error) is still EXIT_PARTIAL, not swallowed by the total-failure fix above")
 def _():

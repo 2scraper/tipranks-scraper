@@ -550,9 +550,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "or puppeteer_scraper.py for the 2Captcha Scraping Browser API.", file=sys.stderr,
             )
             return EXIT_BAD_USAGE
-        if webdriver is None:
-            print("error: selenium is not installed", file=sys.stderr)
-            return EXIT_CRASH
+        # No `webdriver is None` guard here on purpose: run() already
+        # raises RuntimeError("selenium is not installed") for that case
+        # (see below), and the try/except around the run() call below
+        # already turns that into EXIT_CRASH. A separate pre-check here
+        # would run unconditionally, BEFORE run() is even called — which
+        # would also fire when a test (smoke_test.py's fake_run_* checks)
+        # monkeypatches `run` itself to a fake that doesn't need a real
+        # driver at all, breaking the same monkeypatch pattern playwright_
+        # scraper.py/puppeteer_scraper.py already rely on. Confirmed live:
+        # this exact duplicate check was here briefly and only looked
+        # correct because this developer's own sandbox happened to have
+        # `selenium` installed; on a real machine without it, every
+        # fake-run smoke_test.py check for this engine failed with
+        # EXIT_CRASH instead of exercising the fake at all.
 
         proxies = []
         try:
