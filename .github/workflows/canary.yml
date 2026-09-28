@@ -14,9 +14,21 @@ jobs:
   # (see SECURITY.md) — so this canary runs unconditionally rather than
   # skipping behind an optional-secret gate.
   #
-  # This is an availability canary: a green badge means the workflow
-  # obtained real data. A datacentre-IP block is useful diagnostic context,
-  # but it is still an unavailable scraper and therefore fails this job.
+  # This is an availability canary. A crash or bad-usage exit (1/2) is a
+  # real bug in this repo and fails the job. A live-site block from a
+  # datacentre IP (exit 3) is useful diagnostic context, not a bug this
+  # repo can fix by itself (see CONTRIBUTING.md) -- it's reported loudly
+  # as a workflow warning annotation, with the run's meta.json still
+  # uploaded, but does NOT fail the job or turn the badge red. That
+  # matches CONTRIBUTING.md's contributor-facing description, which this
+  # workflow did not actually implement until 2026-09-28 (canary run #1
+  # hit a real datacentre-IP block on its very first live fire and failed
+  # the job on it, contradicting that doc -- see CHANGELOG.md). A green
+  # badge therefore means "ran without crashing", not "definitely got
+  # through to real data" -- check the uploaded meta.json artifact for
+  # that. Zero-products/remote-api-error/partial (4/5/6) still fail the
+  # job: unlike a block, those can also mean this repo's own parser or
+  # wiring broke, not just an external condition.
   canary-live:
     runs-on: ubuntu-latest
     steps:
@@ -50,6 +62,7 @@ jobs:
           echo "exit_code=$?" >> "$GITHUB_ENV"
 
       - name: Validate the live result
+        id: validate
         run: |
           python3 -c "
           import json, os, sys
@@ -59,7 +72,9 @@ jobs:
 
           if code in (1, 2):
               print(f'::error::exit {code} means crashed or bad usage — a real bug, not a site condition')
-              sys.exit(1)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as gh_out:
+                  print('verdict=bug', file=gh_out)
+              sys.exit(0)
 
           meta = json.load(open('canary_out.json.meta.json'))
           print(json.dumps(meta, indent=2))
@@ -68,10 +83,24 @@ jobs:
               assert meta['status'] == 'complete'
               assert meta['rating_count'] >= 1
               print(f\"canary: got {meta['rating_count']} real ratings\")
+              verdict = 'ok'
+          elif code == 3:
+              # A datacentre-IP block is a site condition, not a bug this
+              # repo can fix on its own — see CONTRIBUTING.md and this
+              # job's own top-level comment. Reported loudly, doesn't fail.
+              print(f\"::warning::live scrape blocked (datacentre IP): exit=3, status={meta.get('status')}, failed={meta.get('failed_tickers')} — see canary_out.json.meta.json in this run's uploaded artifact\")
+              verdict = 'blocked'
           else:
               print(f\"::error::live scrape unavailable: exit={code}, status={meta.get('status')}, failed={meta.get('failed_tickers')}\")
-              sys.exit(1)
+              verdict = 'bug'
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as gh_out:
+              print(f'verdict={verdict}', file=gh_out)
           "
+
+      - name: Fail the job on a real bug (never on a reported datacentre-IP block)
+        if: steps.validate.outputs.verdict == 'bug'
+        run: exit 1
 
       - name: Upload the run's output on every attempt
         if: always()

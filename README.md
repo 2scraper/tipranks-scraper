@@ -225,9 +225,14 @@ moment...", a `__cf_chl_rt_tk` token on the final URL) on the page
 navigation, in a local headless Playwright run, after an earlier run from
 the same environment had already completed successfully — a behavior-
 triggered challenge, not a first-request block. The scraper reports that
-as exit 3, and the daily live canary fails on that outcome so its green
-badge means data was actually collected, rather than only that the CLI
-did not crash.
+as exit 3. **Updated 2026-09-28**: the daily live canary's very first run
+hit exactly this — a real block from GitHub Actions' own datacentre IP —
+and the canary now reports it as a workflow warning annotation rather
+than failing the job (see CONTRIBUTING.md and the workflow's own
+comments); a crash or bad-usage exit (a real bug) still fails it. So the
+canary's green badge means "the CLI ran without crashing", not "data was
+definitely collected" — check the run's uploaded `canary_out.json.meta.json`
+artifact for that, or look for a warning annotation on a green run.
 
 ## Engine notes
 

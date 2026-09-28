@@ -116,9 +116,18 @@ cannot be provoked on demand and belongs to the scheduled canary.
 8. Grep the actual stdout/output files for anything unexpected — a credential should never leak into a log line or a `.meta.json` sidecar under a real failure, not just a simulated one (CLAUDE.md §10) — this matters more now than it did before 2026-09-28, since this repo has a real credential model today.
 9. `docker build -t tipranks-scraper .` then `docker run --rm tipranks-scraper --ticker AAPL` — confirm the entrypoint works and the image doesn't ship `tests/`/`smoke_test.py`.
 10. CI: this repo's `canary` workflow needs no secret to run. It fails on a
-    block, remote error, partial run, or zero ratings; a green badge therefore
-    means the GitHub runner collected real data. It also checks that the
-    captured robots.txt Allow/Disallow rules still match the live file.
+    crash, bad usage, remote error, partial run, or zero ratings — real bugs
+    this repo can fix. **Updated 2026-09-28**: a live-site block from a
+    datacentre IP (exit 3) no longer fails the job — canary run #1 hit
+    exactly that on its first-ever fire, and CONTRIBUTING.md had already
+    promised this outcome would be "a reported warning, not a merge-blocking
+    failure" even though the workflow itself didn't do that yet. It's now a
+    `::warning::` annotation instead, with `canary_out.json.meta.json` still
+    uploaded so the actual outcome stays visible. A green badge therefore
+    means "the GitHub runner didn't crash", not "definitely collected real
+    data" — that's what the uploaded artifact and any warning annotation on
+    the run are for. It also checks that the captured robots.txt
+    Allow/Disallow rules still match the live file.
 
 ## The 2Captcha toolkit, for real
 

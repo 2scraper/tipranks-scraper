@@ -6,6 +6,32 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed — 2026-09-28, `canary.yml` failing on a real (expected) datacentre-IP block
+
+- Canary run #1 — its first fire ever, scheduled — hit a real block:
+  TipRanks refused the scrape from GitHub Actions' own datacentre IP for
+  all three test tickers (`exit=3, status=blocked`). The job failed
+  (red badge), which surprised Roman since `CONTRIBUTING.md` already
+  promised the opposite: "a live-site block from a datacentre IP is a
+  reported warning there, not a merge-blocking failure" — a promise the
+  workflow itself never actually implemented.
+- Fixed `canary.yml` to match what `CONTRIBUTING.md` already said: a
+  crash or bad-usage exit (1/2) — a real bug in this repo — still fails
+  the job. A block (exit 3) now prints a `::warning::` annotation and
+  does NOT fail the job; `canary_out.json.meta.json` is still uploaded
+  every run, so the actual outcome stays visible even on a green run.
+  Zero-products/remote-api-error/partial (4/5/6) still fail the job —
+  unlike a block, those can also mean this repo's own parser or wiring
+  broke, not just an external condition, so they stay load-bearing.
+- This changes what the canary badge means: green now means "ran without
+  crashing", not "definitely collected real data" — `README.md` and
+  `TESTING.md` updated to say so plainly, resolving the contradiction
+  with `CONTRIBUTING.md` rather than picking a side silently.
+- No proxy/anti-detection was added — this only changes whether a real,
+  external, out-of-this-repo's-control block reaches the badge. Whether
+  this repo should get a proxy so its own canary can see past this class
+  of block is a separate, not-yet-decided question.
+
 ## [0.3.0] - 2026-09-28
 
 ### Added
