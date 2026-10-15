@@ -47,7 +47,7 @@ block was observed in a pre-release audit: `TWOCAPTCHA_KEY`,
   proxy's password (not its login) in every log line, and its
   `redact_credentials()` scrubs a credential out of an arbitrary
   driver/HTTP exception message before it's logged or re-raised — an
-  exception message is a log too (CLAUDE.md §8): Playwright's
+  exception message is a log too: Playwright's
   `connect_over_cdp` repeats a failed `ws://login:password@…` endpoint
   up to five times in one error, and `requests` puts the full URL, query
   string included, into every `HTTPError`.

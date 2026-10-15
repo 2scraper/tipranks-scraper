@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """output_writer.py — writer, exit codes, and run metadata for
 tipranks-scraper. The exit-code contract and `finish_run()` outcome
-precedence are the same shape as the rest of the 2scraper family
-(CLAUDE.md §9), because that part is genuinely site-agnostic and a
+precedence are the same shape as the rest of the 2scraper family,
+because that part is genuinely site-agnostic and a
 caller integrating more than one family member benefits from one
 consistent set of exit codes. The row schema (`TickerRating`, in
 `tipranks_parser.py`) is NOT the family's `Product` dataclass — this
@@ -53,24 +53,37 @@ RATING_FIELD_NAMES: List[str] = [f.name for f in fields(TickerRating)]
 # --------------------------------------------------------------------------- #
 # Writers
 # --------------------------------------------------------------------------- #
+def _new_file_mode() -> int:
+    """The mode `open()` would give a new file: 0o666 minus the umask.
+    The umask can only be read by setting it, so it is put straight back."""
+    umask = os.umask(0)
+    os.umask(umask)
+    return 0o666 & ~umask
+
+
 def _atomic_write_text(path: str, text: str) -> None:
-    """Durably replace one text file without exposing a truncated target."""
+    """Durably replace one text file without exposing a truncated target.
+    An existing file keeps its mode; a new one gets the mode the umask
+    allows, never a fixed 0644 (that made output world-readable under a
+    private umask such as 077)."""
     target = Path(path)
     parent = target.parent if str(target.parent) else Path(".")
     fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=str(parent))
     try:
-        mode = (target.stat().st_mode & 0o777) if target.exists() else 0o644
+        mode = (target.stat().st_mode & 0o777) if target.exists() else _new_file_mode()
         os.chmod(tmp_name, mode)
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            fd = -1  # the file object owns the descriptor now
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_name, target)
-    except Exception:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+    except BaseException:
+        if fd != -1:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(tmp_name)
         except OSError:
@@ -83,20 +96,47 @@ def write_json(ratings: Sequence[TickerRating], out_path: str) -> None:
     _atomic_write_text(out_path, text)
 
 
-def write_csv(ratings: Sequence[TickerRating], out_path: str) -> None:
+# A spreadsheet treats a cell starting with one of these as a formula.
+# Site-provided text (company_name, for example) must never run as one, so
+# the CSV gets a leading apostrophe on such strings. Numbers are left as
+# they are (a negative upside is data, not a formula), and JSON output is
+# never altered.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+
+def _csv_cell(value):
+    """Return (cell, escaped?) for one CSV value."""
+    if isinstance(value, (list, dict)):
+        value = json.dumps(value, ensure_ascii=False)
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value, True
+    return value, False
+
+
+def write_csv(ratings: Sequence[TickerRating], out_path: str) -> int:
+    """Write the CSV and return how many cells were formula-escaped."""
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=RATING_FIELD_NAMES)
     writer.writeheader()  # written even for zero rows.
+    escaped = 0
     for r in ratings:
-        writer.writerow(asdict(r))
+        row = {}
+        for key, value in asdict(r).items():
+            row[key], was_escaped = _csv_cell(value)
+            escaped += was_escaped
+        writer.writerow(row)
     _atomic_write_text(out_path, buffer.getvalue())
+    return escaped
 
 
-def write_output(ratings: Sequence[TickerRating], out_path: str, fmt: str) -> None:
+def write_output(ratings: Sequence[TickerRating], out_path: str, fmt: str) -> int:
+    """Write the rows; return the number of formula-escaped CSV cells
+    (always 0 for JSON)."""
     if fmt == "json":
         write_json(ratings, out_path)
+        return 0
     elif fmt == "csv":
-        write_csv(ratings, out_path)
+        return write_csv(ratings, out_path)
     else:
         raise ValueError(f"Unsupported format: {fmt!r} (expected 'json' or 'csv')")
 
@@ -160,8 +200,9 @@ def finish_run(
     allow_empty: bool,
     started_at: float,
     extra_meta: Optional[dict] = None,
+    parser_failed_tickers: Optional[List[str]] = None,
 ) -> int:
-    """Same outcome precedence as the rest of the family (CLAUDE.md §9):
+    """Same outcome precedence as the rest of the family:
     remote_api_error > blocked > zero_products > partial > complete,
     decided once, independent of --allow-empty. A zero-result outcome
     writes neither file unless the caller explicitly passed --allow-empty;
@@ -189,8 +230,17 @@ def finish_run(
     confirmed BOTH; treating every all-blocked run as remote_api_error
     instead would make `blocked` unreachable in the single most realistic
     case for it (a block usually takes out the whole run, not a cherry-
-    picked subset of tickers)."""
+    picked subset of tickers).
+
+    `parser_failed_tickers` (a subset of `failed_tickers`) are tickers
+    whose page was served and carried a stock list, but whose own record
+    could not be found in it: this repo's parser lost the data, which is
+    neither "the ticker does not exist" nor a network failure. They count
+    as failed, so a run of nothing else exits 5 with status
+    `parser_failed`, and a run with other rows exits 6 (partial). They are
+    listed in the sidecar either way."""
     failed_tickers = failed_tickers or []
+    parser_failed_tickers = [t for t in (parser_failed_tickers or []) if t in failed_tickers]
     partial = bool(failed_tickers) and bool(tickers_completed)
     zero_products = len(ratings) == 0
     total_failure = bool(failed_tickers) and not tickers_completed
@@ -198,6 +248,8 @@ def finish_run(
 
     if remote_api_error:
         status, exit_code = "remote_api_error", EXIT_REMOTE_API_ERROR
+        if parser_failed_tickers and set(parser_failed_tickers) == set(failed_tickers):
+            status = "parser_failed"
     elif blocked:
         status, exit_code = "blocked", EXIT_BLOCKED
     elif zero_products:
@@ -210,8 +262,14 @@ def finish_run(
     if zero_products and not allow_empty:
         return exit_code
 
-    write_output(ratings, out_path, fmt)
+    csv_cells_escaped = write_output(ratings, out_path, fmt)
     output_sha256 = hashlib.sha256(Path(out_path).read_bytes()).hexdigest()
+    # Our own fields first, so anything the caller passed wins on a clash.
+    meta_extra = {
+        "csv_cells_escaped": csv_cells_escaped,
+        "parser_failed_tickers": parser_failed_tickers,
+    }
+    meta_extra.update(extra_meta or {})
     write_meta(
         out_path,
         status=status,
@@ -222,7 +280,7 @@ def finish_run(
         failed_tickers=failed_tickers,
         rating_count=len(ratings),
         started_at=started_at,
-        extra=extra_meta,
+        extra=meta_extra,
         output_sha256=output_sha256,
     )
     return exit_code

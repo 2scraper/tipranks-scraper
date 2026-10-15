@@ -76,8 +76,7 @@ works against tipranks.com right now."
   `TwoCaptchaClient.scrape_url` confirms the built connection URL
   actually carries the requested country/profile id, and that it stays
   `None` without the flag); that `--scraper-api` fetches
-  `ticker_payload_url()` directly, not the rendered page (this repo's own
-  divergence from shein-scraper/g2-scraper); a real fixture round-tripped
+  `ticker_payload_url()` directly, not the rendered page; a real fixture round-tripped
   through a faked `--scraper-api` response reaches `EXIT_OK`; a
   Cloudflare block-marker body reaches `EXIT_BLOCKED` the same way;
   `_maybe_solve_captcha`'s documented no-op contract (no client/policy
@@ -86,8 +85,8 @@ works against tipranks.com right now."
 
 ## What it does not cover
 
-There is no `local_e2e_test.py` in this repo (a sibling scraper with a
-proxy pool and multi-page pagination has one, to reproduce a
+There is no `local_e2e_test.py` in this repo (a scraper with a
+proxy pool and multi-page pagination needs one, to reproduce a
 control-flow bug class that genuinely doesn't exist here — a single
 ticker fetch has no rotation/pagination state to get wrong). The engine
 scripts' actual browser-automation code (`page.goto` + the in-page
@@ -113,21 +112,19 @@ cannot be provoked on demand and belongs to the scheduled canary.
 5. Selenium: `pip install -r requirements-selenium.txt`, run the same commands against `selenium_scraper.py`. Confirm `driver.title`-based not-found detection actually fires on a real invalid ticker (see that file's module docstring for why it differs from the other two engines).
 6. Puppeteer: `pip install -r requirements-puppeteer.txt`, same commands against `puppeteer_scraper.py`.
 7. `python3 diff_runs.py out1.json out2.json` against two real runs a few minutes apart — confirm `price target changed`/`smart score changed` behave sensibly (small moves are normal; see `tipranks_parser.py`'s note on the payload's own edge-cache TTL for why a very recent price can lag).
-8. Grep the actual stdout/output files for anything unexpected — a credential should never leak into a log line or a `.meta.json` sidecar under a real failure, not just a simulated one (CLAUDE.md §10) — this matters more now than it did before 2026-09-28, since this repo has a real credential model today.
+8. Grep the actual stdout/output files for anything unexpected — a credential should never leak into a log line or a `.meta.json` sidecar under a real failure, not just a simulated one — this matters more now than it did before 2026-09-28, since this repo has a real credential model today.
 9. `docker build -t tipranks-scraper .` then `docker run --rm tipranks-scraper --ticker AAPL` — confirm the entrypoint works and the image doesn't ship `tests/`/`smoke_test.py`.
-10. CI: this repo's `canary` workflow needs no secret to run. It fails on a
-    crash, bad usage, remote error, partial run, or zero ratings — real bugs
-    this repo can fix. **Updated 2026-09-28**: a live-site block from a
-    datacentre IP (exit 3) no longer fails the job — canary run #1 hit
-    exactly that on its first-ever fire, and CONTRIBUTING.md had already
-    promised this outcome would be "a reported warning, not a merge-blocking
-    failure" even though the workflow itself didn't do that yet. It's now a
-    `::warning::` annotation instead, with `canary_out.json.meta.json` still
-    uploaded so the actual outcome stays visible. A green badge therefore
-    means "the GitHub runner didn't crash", not "definitely collected real
-    data" — that's what the uploaded artifact and any warning annotation on
-    the run are for. It also checks that the captured robots.txt
-    Allow/Disallow rules still match the live file.
+10. CI: this repo's `canary` workflow has two jobs. `canary-live` runs
+    through the `TIPRANKS_PROXY` or `TIPRANKS_CDP_ENDPOINT` repository
+    secret and is green only when all three tickers come back complete with
+    company name, analyst count, consensus and price target present; a
+    block, an empty or partial run, or a missing secret is red. (From
+    2026-10-01 to 2026-10-15 every scheduled run from the bare runner was
+    blocked with 0 rows while the old workflow stayed green, which is why a
+    block is no longer a pass.) `canary-datacentre` runs from the runner's
+    own IP, where a refusal (exit 3) is expected and reported as a notice;
+    any other failure there is red. It also checks that the captured
+    robots.txt Allow/Disallow rules still match the live file.
 
 ## The 2Captcha toolkit, for real
 
@@ -189,8 +186,7 @@ this site specifically, none of which has been exercised live yet.
     in-page authenticated fetch this repo's browser engines use (see
     `_fetch_one_via_scraper_api()`'s own docstring — this is the load-
     bearing untested assumption `--scraper-api` rests on for this repo
-    specifically, unlike shein-scraper/g2-scraper, which fetch the
-    rendered page instead); and whether `--scraper-api-cdp` actually
+    specifically, since it does not fetch the rendered page); and whether `--scraper-api-cdp` actually
     solves a real Cloudflare challenge on 2Captcha's own side of that
     Scraping Browser session before the response comes back.
     `smoke_test.py` only proves the `cdpurl` gets built correctly and

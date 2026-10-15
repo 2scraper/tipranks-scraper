@@ -25,6 +25,12 @@ env/
 .idea/
 .vscode/
 
-# in case a local .env is ever added
-.env
+# local configuration and any copy of it (.env.bak, .env.local, ...) —
+# only the documented template is tracked
+.env*
+!.env.example
+
+# raw captures and live-debugging dumps
+*.page[0-9]*
+live/
 *.log

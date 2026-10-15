@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """smoke_test.py — offline test suite. No engine driver required: it must
 pass with NONE of playwright/selenium/pyppeteer installed, same as every
-2scraper family member's offline suite (CLAUDE.md §6). Run with
+2scraper family member's offline suite. Run with
 `python3 smoke_test.py`.
 """
 from __future__ import annotations
@@ -325,8 +325,8 @@ def _dummy_rating():
 
 
 # --------------------------------------------------------------------------- #
-# All three engines — importable with NO engine driver installed at all
-# (CLAUDE.md §6), and their non-network paths runnable without one.
+# All three engines — importable with NO engine driver installed at all,
+# and their non-network paths runnable without one.
 # --------------------------------------------------------------------------- #
 import playwright_scraper
 import selenium_scraper
@@ -373,7 +373,7 @@ def _():
 
 
 @check("every engine accepts --executable-path (a real fix for a confirmed-live "
-       "puppeteer bug, kept for CLI parity across all three per CLAUDE.md §4)")
+       "puppeteer bug, kept for CLI parity across all three engines)")
 def _():
     for mod in ENGINE_MODULES:
         args = mod.parse_args(["--ticker", "AAPL", "--executable-path", "/some/chrome"])
@@ -392,7 +392,7 @@ def _():
     import output_writer as ow
 
     def fake_run_total_failure(tickers, **kwargs):
-        return [], [], list(tickers), []  # nothing completed, nothing blocked either
+        return [], [], list(tickers), [], []  # nothing completed, nothing blocked either
 
     for mod in ENGINE_MODULES:
         original = mod.run
@@ -410,7 +410,7 @@ def _():
     import output_writer as ow
 
     def fake_run_all_blocked(tickers, **kwargs):
-        return [], [], list(tickers), list(tickers)  # all failed, all of them "blocked"
+        return [], [], list(tickers), list(tickers), []  # all failed, all of them "blocked"
 
     for mod in ENGINE_MODULES:
         original = mod.run
@@ -423,7 +423,7 @@ def _():
 
 
 @check("main() never short-circuits on 'driver not installed' BEFORE calling a monkeypatched "
-       "run() — regression test for a real gap found live on Roman's own machine 2026-09-28: "
+       "run() — regression test for a real gap found live on a maintainer's machine 2026-09-28: "
        "selenium_scraper.py/puppeteer_scraper.py briefly had a `webdriver is None`/"
        "`pyppeteer_launch is None` guard placed directly in main(), which fired unconditionally, "
        "before run() (or the fake replacing it) was ever called — the driver-not-installed check "
@@ -431,8 +431,8 @@ def _():
        "run() (this smoke test's own fake_run_* checks, or a real embedder) still gets called. This "
        "was invisible in a sandbox that happened to have every engine driver installed — every "
        "fake_run_* check above passed there while being silently short-circuited on a machine "
-       "without the drivers, which is exactly this suite's whole point (CLAUDE.md §6: 'no engine "
-       "driver installed at all'). Forces the driver symbol to None here, regardless of what is "
+       "without the drivers, which is exactly this suite's whole point (it must pass with no engine "
+       "driver installed at all). Forces the driver symbol to None here, regardless of what is "
        "actually installed in whatever environment runs this suite, so this can never again pass "
        "for the wrong reason.")
 def _():
@@ -445,7 +445,7 @@ def _():
     }
 
     def fake_run_all_blocked(tickers, **kwargs):
-        return [], [], list(tickers), list(tickers)
+        return [], [], list(tickers), list(tickers), []
 
     for mod in ENGINE_MODULES:
         attr = driver_attr[mod]
@@ -473,7 +473,7 @@ def _():
     def fake_run_partial(tickers, **kwargs):
         good, bad = tickers[0], (tickers[1] if len(tickers) > 1 else "ZZZ")
         rating = TickerRating(ticker=good, source="tipranks", source_url="x", scraped_at="x")
-        return [rating], [good], [bad], []
+        return [rating], [good], [bad], [], []
 
     for mod in ENGINE_MODULES:
         original = mod.run
@@ -495,7 +495,7 @@ def _():
     import output_writer as ow
 
     def fake_run_mixed(tickers, **kwargs):
-        return [], [], list(tickers), [tickers[0]]
+        return [], [], list(tickers), [tickers[0]], []
 
     for mod in ENGINE_MODULES:
         original = mod.run
@@ -520,9 +520,8 @@ def _():
 
 # --------------------------------------------------------------------------- #
 # 2Captcha toolkit (env_config, proxy_pool, captcha_solver,
-# scraper_api_client) — added 2026-09-28, ported from shein-scraper/
-# g2-scraper after a real Cloudflare block was observed (CHANGELOG.md
-# 0.2.0). See playwright_scraper.py's own module docstring for why: a
+# scraper_api_client) — added 2026-09-28 after a real Cloudflare block
+# was observed (CHANGELOG.md 0.2.0). See playwright_scraper.py's own module docstring for why: a
 # real block, not a confirmed CAPTCHA widget.
 # --------------------------------------------------------------------------- #
 import env_config
@@ -598,7 +597,7 @@ def _():
     assert "user1234" in masked
 
 
-@check("proxy_pool.redact_credentials strips login:password out of an arbitrary string (an exception message is a log — CLAUDE.md §8)")
+@check("proxy_pool.redact_credentials strips login:password out of an arbitrary string (an exception message is a log too)")
 def _():
     text = "connect_over_cdp failed: ws://realuser:realpass1234@cb.2captcha.com:9222 timed out"
     redacted = _proxy_pool.redact_credentials(text)
@@ -626,7 +625,7 @@ def _():
     assert client.scraper_api_base == "https://mock.example/scraper"
 
 
-@check("all three engines define --scraper-api-cdp/--scraper-api-country/--scraper-api-profile-id, and pass cdp_url through to scraper_api_client.scrape_url (2026-09-28 port from shein-scraper/g2-scraper)")
+@check("all three engines define --scraper-api-cdp/--scraper-api-country/--scraper-api-profile-id, and pass cdp_url through to scraper_api_client.scrape_url")
 def _():
     for path in ("playwright_scraper.py", "selenium_scraper.py", "puppeteer_scraper.py"):
         src = (ROOT / path).read_text(encoding="utf-8")
@@ -683,7 +682,7 @@ def _():
             scraper_api_client.TwoCaptchaClient.scrape_url = original
 
 
-@check("--scraper-api fetches ticker_payload_url() directly (the JSON endpoint), not the rendered page — this repo's own deliberate divergence from shein-scraper/g2-scraper, see _fetch_one_via_scraper_api's docstring")
+@check("--scraper-api fetches ticker_payload_url() directly (the JSON endpoint), not the rendered page — a deliberate choice for this repo, see _fetch_one_via_scraper_api's docstring")
 def _():
     original = scraper_api_client.TwoCaptchaClient.scrape_url
     captured = {}
@@ -754,7 +753,9 @@ def _():
 
     for mod in ENGINE_MODULES:
         fn = mod._maybe_solve_captcha
-        kwargs = dict(client=None, ticker="AAPL", policy="when-blocked", min_score=0.3)
+        from captcha_solver import SolveBudget
+
+        kwargs = dict(client=None, ticker="AAPL", policy="when-blocked", min_score=0.3, budget=SolveBudget())
         if mod is playwright_scraper:
             fn(page=None, **kwargs)
         elif mod is selenium_scraper:
@@ -774,7 +775,7 @@ def _():
         assert args.block_retries == 5, mod.__name__
 
 
-@check("selenium refuses a credentialed --cdp-endpoint outright (EXIT_BAD_USAGE) — chromedriver cannot authenticate a remote CDP session, unlike Playwright/Puppeteer (CLAUDE.md §6)")
+@check("selenium refuses a credentialed --cdp-endpoint outright (EXIT_BAD_USAGE) — chromedriver cannot authenticate a remote CDP session, unlike Playwright/Puppeteer")
 def _():
     import output_writer as ow
 
@@ -910,6 +911,441 @@ def _():
     assert "smoke_test.py" in text, "Dockerfile should run smoke_test.py at build time"
     assert re.search(r"rm\s+-rf\s+[^\n]*smoke_test", text), "Dockerfile must strip the test suite from the final layer"
     assert "COPY .env" not in text, "Dockerfile must never COPY a .env into the image"
+
+
+# --------------------------------------------------------------------------- #
+# Output contract, paid-solve budget, flag validation, parser failure and
+# credential-scan guards (2026-10-14 audit fixes).
+# --------------------------------------------------------------------------- #
+@check("atomic writer: a new file gets 0o666 & ~umask (022/002/077), an existing file keeps its mode, a failed write keeps the old file and leaves no temp file")
+def _():
+    import os as _os
+    import output_writer as ow
+
+    with tempfile.TemporaryDirectory() as td:
+        for umask, expected in ((0o022, 0o644), (0o002, 0o664), (0o077, 0o600)):
+            path = Path(td) / f"new-{umask:o}.json"
+            old = _os.umask(umask)
+            try:
+                ow._atomic_write_text(str(path), "[]")
+            finally:
+                _os.umask(old)
+            mode = path.stat().st_mode & 0o777
+            assert mode == expected, f"umask {umask:o}: mode {mode:o}, expected {expected:o}"
+
+        existing = Path(td) / "existing.json"
+        existing.write_text("old", encoding="utf-8")
+        _os.chmod(existing, 0o660)
+        ow._atomic_write_text(str(existing), "new")
+        assert existing.stat().st_mode & 0o777 == 0o660
+        assert existing.read_text(encoding="utf-8") == "new"
+
+        original_fsync = ow.os.fsync
+
+        def _broken_fsync(fd):
+            raise OSError("disk full")
+
+        ow.os.fsync = _broken_fsync
+        try:
+            try:
+                ow._atomic_write_text(str(existing), "should not land")
+            except OSError:
+                pass
+            else:
+                raise AssertionError("a failed fsync was swallowed")
+        finally:
+            ow.os.fsync = original_fsync
+        assert existing.read_text(encoding="utf-8") == "new"
+        leftovers = [p.name for p in Path(td).iterdir() if p.name.startswith(".existing.json.")]
+        assert not leftovers, leftovers
+
+
+@check("CSV output neutralises formula-shaped text cells, leaves numbers and JSON alone, and records csv_cells_escaped in the sidecar under the caller's extra_meta")
+def _():
+    import csv as csv_mod
+    import output_writer as ow
+    from tipranks_parser import TickerRating
+
+    rating = TickerRating(
+        ticker="AAPL", source="tipranks", source_url="https://example/",
+        scraped_at="2026-10-14T00:00:00Z", company_name='=HYPERLINK("http://x","y")',
+        consensus_rating_label="@SUM(A1)", price_target_upside=-3.25,
+    )
+    with tempfile.TemporaryDirectory() as td:
+        out = str(Path(td) / "run.csv")
+        code = ow.finish_run(
+            ratings=[rating], out_path=out, fmt="csv", engine="playwright",
+            tickers_requested=["AAPL"], tickers_completed=["AAPL"], failed_tickers=[],
+            blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+        )
+        assert code == ow.EXIT_OK
+        with open(out, newline="", encoding="utf-8") as f:
+            row = next(csv_mod.DictReader(f))
+        assert row["company_name"] == "'" + rating.company_name, row["company_name"]
+        assert row["consensus_rating_label"] == "'@SUM(A1)"
+        assert row["price_target_upside"] == "-3.25", "a negative number is data, not a formula"
+        meta = json.loads(Path(out + ".meta.json").read_text(encoding="utf-8"))
+        assert meta["csv_cells_escaped"] == 2, meta
+
+        for prefix in ("+", "-", "\t", "\r", "\n"):
+            assert ow._csv_cell(prefix + "x") == ("'" + prefix + "x", True), repr(prefix)
+
+        out_json = str(Path(td) / "run.json")
+        ow.finish_run(
+            ratings=[rating], out_path=out_json, fmt="json", engine="playwright",
+            tickers_requested=["AAPL"], tickers_completed=["AAPL"], failed_tickers=[],
+            blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+            extra_meta={"csv_cells_escaped": "caller wins"},
+        )
+        assert json.loads(Path(out_json).read_text(encoding="utf-8"))[0]["company_name"] == rating.company_name
+        meta = json.loads(Path(out_json + ".meta.json").read_text(encoding="utf-8"))
+        assert meta["csv_cells_escaped"] == "caller wins", "caller-provided extra_meta must win"
+
+
+class _CountingSolverClient:
+    """Stands in for TwoCaptchaClient: counts purchases, never networks."""
+
+    def __init__(self):
+        self.purchases = 0
+
+    def solve_and_wait(self, task):
+        self.purchases += 1
+        return "fake-token"
+
+
+_TURNSTILE_BLOCK_HTML = (
+    '<html><title>Just a moment...</title>'
+    '<div class="cf-turnstile" data-sitekey="0x4AAAAAAAfakeSiteKey"></div></html>'
+)
+
+
+def _count_purchases(mod, block_retries, tickers=("AAPL", "MSFT")):
+    """Run one engine's real run() loop with a fake browser whose every
+    fetch is blocked by a solvable widget; return the number of purchases."""
+    import asyncio as _asyncio
+
+    client = _CountingSolverClient()
+    blocked = (None, "blocked")
+    saved = {}
+
+    def _patch(name, value):
+        saved[name] = getattr(mod, name)
+        setattr(mod, name, value)
+
+    try:
+        if mod is playwright_scraper:
+            class Page:
+                url = "https://www.tipranks.com/stocks/aapl/stock-analysis"
+                context = None
+
+                def content(self):
+                    return _TURNSTILE_BLOCK_HTML
+
+                def evaluate(self, script, *args):
+                    return None
+
+            class Browser:
+                def new_page(self, **kwargs):
+                    return Page()
+
+                def close(self):
+                    pass
+
+            class Chromium:
+                def launch(self, **kwargs):
+                    return Browser()
+
+            class PW:
+                chromium = Chromium()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+            _patch("sync_playwright", lambda: PW())
+            _patch("fetch_one", lambda page, ticker: blocked)
+            mod.run(list(tickers), client=client, block_retries=block_retries)
+        elif mod is selenium_scraper:
+            class Driver:
+                page_source = _TURNSTILE_BLOCK_HTML
+                current_url = "https://www.tipranks.com/stocks/aapl/stock-analysis"
+
+                def execute_script(self, script, *args):
+                    return None
+
+                def quit(self):
+                    pass
+
+            _patch("webdriver", object())
+            _patch("_make_driver", lambda *a, **k: Driver())
+            _patch("fetch_one", lambda driver, ticker: blocked)
+            mod.run(list(tickers), client=client, block_retries=block_retries)
+        elif mod is puppeteer_scraper:
+            class Page:
+                url = "https://www.tipranks.com/stocks/aapl/stock-analysis"
+
+                async def content(self):
+                    return _TURNSTILE_BLOCK_HTML
+
+                async def evaluate(self, script, *args):
+                    return None
+
+            class Browser:
+                async def newPage(self):
+                    return Page()
+
+                async def close(self):
+                    pass
+
+            async def _fake_launch(**kwargs):
+                return Browser()
+
+            async def _fake_fetch(page, ticker):
+                return blocked
+
+            _patch("pyppeteer_launch", object())
+            _patch("_launch", _fake_launch)
+            _patch("fetch_one_async", _fake_fetch)
+            _asyncio.new_event_loop().run_until_complete(
+                mod.run_async(list(tickers), client=client, block_retries=block_retries)
+            )
+        else:
+            raise AssertionError(f"unrecognised engine module {mod.__name__}")
+    finally:
+        for name, value in saved.items():
+            setattr(mod, name, value)
+    return client.purchases
+
+
+@check("paid captcha solves: at most one purchase per ticker in every engine, however large --block-retries is, and none when no retry would use the token")
+def _():
+    for mod in ENGINE_MODULES:
+        for retries, expected in ((10, 2), (2, 2), (0, 0)):
+            got = _count_purchases(mod, retries)
+            assert got == expected, (
+                f"{mod.__name__}: --block-retries {retries} bought {got} solves for 2 tickers, expected {expected}"
+            )
+
+
+@check("solve_when_blocked checks the per-ticker budget before buying: a spent budget never reaches the solver")
+def _():
+    from captcha_solver import SOLVES_PER_TICKER, SolveBudget, solve_when_blocked
+
+    assert SOLVES_PER_TICKER == 1
+    client = _CountingSolverClient()
+    budget = SolveBudget()
+    kwargs = dict(
+        client=client, budget=budget, page_url="https://x/", html=_TURNSTILE_BLOCK_HTML,
+        count_product_links=lambda _h: 0, extra_markers=("just a moment",),
+    )
+    assert solve_when_blocked(**kwargs)["action"] == "solved"
+    assert solve_when_blocked(**kwargs)["action"] == "skipped_budget_exhausted"
+    assert client.purchases == 1
+
+
+@check("every engine rejects a negative --block-retries and an out-of-range --scraper-api-timeout as bad usage (exit 2, naming the flag); --block-retries 0 is accepted")
+def _():
+    import contextlib
+    import io as _io
+
+    for mod in ENGINE_MODULES:
+        for argv, flag in (
+            (["--ticker", "AAPL", "--block-retries", "-1"], "--block-retries"),
+            (["--ticker", "AAPL", "--scraper-api-timeout", "0"], "--scraper-api-timeout"),
+            (["--ticker", "AAPL", "--scraper-api-timeout", "121"], "--scraper-api-timeout"),
+        ):
+            err = _io.StringIO()
+            with contextlib.redirect_stderr(err):
+                try:
+                    mod.main(argv)
+                except SystemExit as exc:
+                    code = exc.code
+                else:
+                    code = None
+            assert code == 2, f"{mod.__name__} {argv}: exit {code}"
+            assert flag in err.getvalue(), f"{mod.__name__}: error does not name {flag}: {err.getvalue()!r}"
+        assert mod.parse_args(["--ticker", "AAPL", "--block-retries", "0"]).block_retries == 0
+
+
+def _payload_with_renamed_ids():
+    payload = _load_fixture("tipranks_aapl_stock_analysis.json")
+    for stock in payload["models"]["stocks"]:
+        stock["ticker"] = stock.pop("_id")
+    return payload
+
+
+@check("a served payload whose stock list no longer yields the ticker is a parser failure, not 'not found'; an empty stock list is still 'not found'")
+def _():
+    from tipranks_parser import missing_record_kind
+
+    assert missing_record_kind(_payload_with_renamed_ids()) == "parser_failed"
+    assert missing_record_kind({"models": {}}) == "parser_failed"
+    assert missing_record_kind({"models": {"stocks": []}}) == "not_found"
+
+    class Response:
+        status = 200
+
+    class Page:
+        url = "https://www.tipranks.com/stocks/aapl/stock-analysis"
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def goto(self, *args, **kwargs):
+            return Response()
+
+        def wait_for_timeout(self, ms):
+            pass
+
+        def evaluate(self, script, *args):
+            return self.payload
+
+    assert playwright_scraper.fetch_one(Page(_payload_with_renamed_ids()), "AAPL") == (None, "parser_failed")
+    assert playwright_scraper.fetch_one(Page({"models": {"stocks": []}}), "AAPL") == (None, "not_found")
+
+
+@check("every engine: a run where the parser loses every ticker exits 5 and writes nothing; with --allow-empty the sidecar says parser_failed and lists the tickers")
+def _():
+    import output_writer as ow
+
+    original = scraper_api_client.TwoCaptchaClient.scrape_url
+    body = json.dumps(_payload_with_renamed_ids())
+
+    def _fake_scrape_url(self, url, *, data_format="raw", timeout=60, wait_for=None, cdp_url=None):
+        return scraper_api_client.ScrapeResult(target_status=200, headers={}, body=body)
+
+    scraper_api_client.TwoCaptchaClient.scrape_url = _fake_scrape_url
+    try:
+        for mod in ENGINE_MODULES:
+            with tempfile.TemporaryDirectory() as td:
+                out = Path(td) / "out.json"
+                base = ["--ticker", "AAPL", "--twocaptcha-key", "fake-key-for-test-only",
+                        "--scraper-api", "--out", str(out)]
+                rc = mod.main(base)
+                assert rc == ow.EXIT_REMOTE_API_ERROR, f"{mod.__name__}: got {rc}"
+                assert not out.exists(), f"{mod.__name__}: wrote output for a parser failure"
+                rc = mod.main(base + ["--allow-empty"])
+                assert rc == ow.EXIT_REMOTE_API_ERROR, f"{mod.__name__}: got {rc}"
+                meta = json.loads(Path(str(out) + ".meta.json").read_text(encoding="utf-8"))
+                assert meta["status"] == "parser_failed", meta
+                assert meta["parser_failed_tickers"] == ["AAPL"], meta
+    finally:
+        scraper_api_client.TwoCaptchaClient.scrape_url = original
+
+
+@check("finish_run: rows plus a parser-failed ticker is partial (6), not complete")
+def _():
+    import output_writer as ow
+
+    with tempfile.TemporaryDirectory() as td:
+        out = str(Path(td) / "run.json")
+        code = ow.finish_run(
+            ratings=[_dummy_rating()], out_path=out, fmt="json", engine="playwright",
+            tickers_requested=["AAPL", "MSFT"], tickers_completed=["AAPL"], failed_tickers=["MSFT"],
+            parser_failed_tickers=["MSFT"],
+            blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+        )
+        assert code == ow.EXIT_PARTIAL, code
+        meta = json.loads(Path(out + ".meta.json").read_text(encoding="utf-8"))
+        assert meta["status"] == "partial" and meta["parser_failed_tickers"] == ["MSFT"], meta
+
+
+@check("diff_runs.py reports a refusal (missing sidecar) with exit 2, distinct from --fail-on-change's exit 1")
+def _():
+    import contextlib
+    import io as _io
+
+    import diff_runs
+
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "run.json"
+        path.write_text("[]", encoding="utf-8")
+        err = _io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = diff_runs.main([str(path), str(path)])
+        assert code == 2, code
+        assert "no sidecar" in err.getvalue()
+
+
+def _load_ci_checks(root=None):
+    import importlib.util
+
+    scanner = ROOT / ".github" / "ci_checks.py"
+    if not scanner.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("tipranks_ci_checks_rules", scanner)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    if root is not None:
+        module.ROOT = root
+    return module
+
+
+@check("credential scanner: catches JSON-escaped and bare 32-hex keys, scans .env.* backups, skips any directory holding pyvenv.cfg, and refuses to pass on an empty scan")
+def _():
+    import subprocess
+
+    if _load_ci_checks() is None:
+        return
+    key = "0123456789abcdef" * 2
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "tmp" / "clone"
+        (root / "tests" / "fixtures").mkdir(parents=True)
+        (root / "myenv" / "lib").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / ".gitignore").write_text(".env*\n!.env.example\n", encoding="utf-8")
+        escaped = '{"x": "{\\"apiKey\\": \\"' + "Zq9" + "realvalue77" + '\\"}"}'
+        (root / "tests" / "fixtures" / "esc.json").write_text(escaped, encoding="utf-8")
+        (root / "bare.py").write_text(f'ENDPOINT = "{key}"\n', encoding="utf-8")
+        (root / ".env.bak").write_text("TWOCAPTCHA" + "_KEY=" + "Zq9realvalue77\n", encoding="utf-8")
+        (root / "myenv" / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+        (root / "myenv" / "lib" / "vendored.py").write_text(f'api_key = "{key}"\n', encoding="utf-8")
+        ci = _load_ci_checks(root)
+        findings, read = ci.scan()
+        hit = {(path, rule) for path, _line, rule in findings}
+        assert ("tests/fixtures/esc.json", "secret_assignment") in hit, findings
+        assert ("bare.py", "twocaptcha_key_shape") in hit, findings
+        assert any(path == ".env.bak" for path, _r in hit), findings
+        assert not any(path.startswith("myenv/") for path, _r in hit), findings
+        assert read >= 3, read
+
+    with tempfile.TemporaryDirectory() as td:
+        empty = Path(td) / "empty"
+        empty.mkdir()
+        subprocess.run(["git", "init", "-q", str(empty)], check=True)
+        ci = _load_ci_checks(empty)
+        assert ci.main() == 1, "an empty scan must not report a pass"
+
+
+@check("no tracked file cites the private instruction file or its section numbers (state the rule in the repo's own words)")
+def _():
+    import subprocess
+
+    if not (ROOT / ".git").exists():
+        return
+    banned = (
+        "CLAUDE" + ".md", "claude_" + "2scraper", "2scraper_" + "repo_rules",
+        "play" + "book", "\u00a7",
+    )
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True,
+    ).stdout.split(b"\0")
+    hits = []
+    for raw in tracked:
+        if not raw:
+            continue
+        rel = raw.decode("utf-8", "surrogateescape")
+        try:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for token in banned:
+            if token in text:
+                hits.append(f"{rel}: {token!r}")
+    assert not hits, hits
 
 
 def main() -> int:

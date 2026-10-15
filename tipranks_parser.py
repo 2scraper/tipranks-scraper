@@ -118,8 +118,7 @@ CONFIRMED, from a real captured session:
   DIS, KO among them), every single one returned a clean 200 with real
   data; none triggered a visible challenge, a CAPTCHA, or a 429. This is
   stated as "not observed to challenge this session's traffic," not
-  "confirmed unprotected" — unlike g2.com's DataDome, there is no known
-  solvable challenge type to wire up here, because none was ever
+  "confirmed unprotected" — there is no known solvable challenge type to wire up here, because none was ever
   presented to solve.
 - A later pre-release audit did observe a real block: an HTTP 403 on the
   page navigation itself, body "Just a moment...", final URL carrying
@@ -173,8 +172,7 @@ TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,31}$")
 # 0.2.0): an HTTP 403 with body text "Just a moment..." AND a final,
 # post-redirect URL carrying Cloudflare's `__cf_chl_rt_tk` query
 # parameter — never a Cloudflare Turnstile/hCaptcha/reCAPTCHA-v2 widget,
-# none of which has ever been seen here (unlike shein.com/g2.com's
-# siblings). Kept as two SEPARATE constants, not one combined list,
+# none of which has ever been seen here. Kept as two SEPARATE constants, not one combined list,
 # because they were confirmed in two different places, not one: the
 # marker text is in the response BODY, `__cf_chl_rt_tk` is in the final
 # URL after Cloudflare's own redirect, not confirmed to also appear
@@ -303,7 +301,7 @@ def humanize_consensus_id(raw_id: Optional[str]) -> Optional[str]:
 @dataclass
 class TickerRating:
     """One ticker's forecast-page snapshot. Not the family's `Product`
-    dataclass (CLAUDE.md §9) — that schema is for marketplace listings
+    dataclass — that schema is for marketplace listings
     with a price/brand/sku, none of which exist here. This is a new,
     domain-appropriate schema for analyst-consensus data; the exit-code
     contract in `output_writer.py` is still shared with the rest of the
@@ -311,8 +309,7 @@ class TickerRating:
 
     `consensus_*` / `best_consensus_*` fields mirror the site's own two
     real scopes (`analystRatings.all` and `analystRatings.best`) and are
-    never merged into one, the same discipline g2-scraper applies to its
-    two distinct rating scales: they measure different analyst
+    never merged into one: they measure different analyst
     populations and collapsing them would misrepresent both.
     """
 
@@ -394,13 +391,28 @@ def find_ticker_record(payload: Dict[str, Any], ticker: str) -> Optional[Dict[st
     return None
 
 
+def missing_record_kind(payload: Any) -> str:
+    """Why `parse_payload` found no record for a ticker, for a payload the
+    site served with a 200. An unknown ticker is answered by the site with
+    a 404/400 before any payload is read, so a served payload without the
+    ticker's record only means "not found" when its stock list is present
+    and empty. A stock list carrying other entries but not this ticker, or
+    no stock list at all, means the payload's shape no longer matches this
+    parser: that is a parser failure, never an empty result."""
+    models = payload.get("models") if isinstance(payload, dict) else None
+    stocks = models.get("stocks") if isinstance(models, dict) else None
+    if isinstance(stocks, list) and not stocks:
+        return "not_found"
+    return "parser_failed"
+
+
 def parse_payload(
     payload: Dict[str, Any], ticker: str, *, source_url: str, scraped_at: str
 ) -> Optional[TickerRating]:
     """Build a TickerRating from an already-fetched, already-JSON-decoded
     stock-analysis payload. Returns None if the ticker's own record isn't
-    in the payload at all (the caller should treat that as "not found",
-    same as a real 404/400 from the site)."""
+    in the payload at all; `missing_record_kind()` then says whether that
+    is a genuine "not found" or a parser failure."""
     record = find_ticker_record(payload, ticker)
     if record is None:
         return None
