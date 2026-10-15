@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-15
+
 > **Behaviour changes.**
 > - `--block-retries` now rejects a negative value with a usage error
 >   (exit 2). Before, `-1` made no request at all and reported an empty
@@ -25,7 +27,7 @@ All notable changes to this project are documented here. Format follows
 >   incomplete run, checksum mismatch), instead of 1, which
 >   `--fail-on-change` uses for "changes found".
 
-### Fixed — 2026-10-14 audit
+### Fixed
 
 - Paid captcha solves are capped at one per ticker in every engine. Before,
   the number of purchases grew with `--block-retries` (3 per blocked ticker
@@ -49,10 +51,7 @@ All notable changes to this project are documented here. Format follows
   maintainer notes or compare this repo with other scrapers; the rules
   are stated directly. A suite check keeps such citations out.
 - `run()` in each engine returns a fifth list, the parser-failed tickers.
-
-### Fixed — 2026-09-28, `canary.yml` failing on a real (expected) datacentre-IP block
-
-- Canary run #1 — its first fire ever, scheduled — hit a real block:
+- 2026-09-28: canary run #1 — its first fire ever, scheduled — hit a real block:
   TipRanks refused the scrape from GitHub Actions' own datacentre IP for
   all three test tickers (`exit=3, status=blocked`). The job failed
   (red badge), although `CONTRIBUTING.md` already
@@ -75,8 +74,6 @@ All notable changes to this project are documented here. Format follows
   external, out-of-this-repo's-control block reaches the badge. Whether
   this repo should get a proxy so its own canary can see past this class
   of block is a separate, not-yet-decided question.
-
-## [0.3.0] - 2026-09-28
 
 ### Added
 
@@ -101,7 +98,7 @@ All notable changes to this project are documented here. Format follows
   `BLOCK_URL_MARKERS`, checked by every engine's fetch function and its
   `--scraper-api` path.
   **What this addition is NOT**: a confirmed CAPTCHA fix. No Cloudflare
-  Turnstile, hCaptcha, or other known solvable widget script has ever
+  Turnstile or other known solvable captcha widget script has ever
   been found in any capture from this site — see `captcha_solver.py`'s
   module docstring for the honesty caveat this carries. `--proxy` and
   `--cdp-endpoint` (a fresh exit IP / a managed device identity) are
