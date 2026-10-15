@@ -93,8 +93,8 @@ Added 2026-09-28, after a real Cloudflare block was observed in a
 pre-release audit (see "What's actually in front of the site" below).
 **This repo has never observed an actual CAPTCHA widget** — the one real block seen was a Cloudflare
 "Just a moment..." JS interstitial (a browser-fingerprinting challenge a
-real browser normally clears on its own), not a confirmed Turnstile/
-hCaptcha/reCAPTCHA challenge. `captcha_solver.py`'s detection/solving is
+real browser normally clears on its own), not a confirmed captcha-widget
+challenge. `captcha_solver.py`'s detection/solving is
 family-standard plumbing, shipped for parity and in case that changes —
 it may simply find nothing to solve here. `--proxy` (a fresh exit IP)
 and `--cdp-endpoint` (a managed device identity) are this repo's own

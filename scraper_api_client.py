@@ -164,7 +164,7 @@ class TwoCaptchaClient:
         TwoCaptchaError on failure/timeout.
 
         For every widget this client originally supported (Turnstile,
-        reCAPTCHA v2/v3, hCaptcha), 2Captcha's `solution` is one opaque
+        reCAPTCHA v2/v3 and other single-token widgets), 2Captcha's `solution` is one opaque
         token string (`token` or `gRecaptchaResponse`) — the whole widget
         collapses to "paste this into one hidden field/callback argument".
         GeeTest (added 2026-09-21 for captcha_solver.CaptchaType.GEETEST_V3/

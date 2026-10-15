@@ -110,7 +110,7 @@ CONFIRMED, from a real captured session:
   demand, not auto-rendered) — so at least two challenge mechanisms are
   present in the page's own JS, even though neither ever actually
   rendered a challenge in this session. No Cloudflare Turnstile script,
-  no hCaptcha, and no known DataDome/PerimeterX/Akamai
+  no other captcha widget script, and no known DataDome/PerimeterX/Akamai
   Bot-Manager/Imperva/Kasada/Arkose Labs cookie or script was found in
   any capture. Across roughly 20 distinct tickers and 35+ page/payload
   requests this session (spread across the initial research and two
@@ -171,7 +171,7 @@ TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,31}$")
 # docstring's "A later pre-release audit" note above, and CHANGELOG.md
 # 0.2.0): an HTTP 403 with body text "Just a moment..." AND a final,
 # post-redirect URL carrying Cloudflare's `__cf_chl_rt_tk` query
-# parameter — never a Cloudflare Turnstile/hCaptcha/reCAPTCHA-v2 widget,
+# parameter — never a captcha widget (Turnstile, reCAPTCHA v2 or other),
 # none of which has ever been seen here. Kept as two SEPARATE constants, not one combined list,
 # because they were confirmed in two different places, not one: the
 # marker text is in the response BODY, `__cf_chl_rt_tk` is in the final
