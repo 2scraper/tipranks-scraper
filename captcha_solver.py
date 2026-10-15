@@ -336,7 +336,7 @@ def build_injection_script(captcha_type: CaptchaType, solution: str) -> Optional
     publicly-documented integration convention, NOT anything confirmed
     against a real family-site capture. `solution` is `result["token"]`
     from `solve_when_blocked()` — a plain string for
-    Turnstile/reCAPTCHA-v2/hCaptcha, a JSON-encoded solution dict for
+    single-token widgets, a JSON-encoded solution dict for
     GeeTest v3/v4 (see `scraper_api_client.solve_and_wait`'s docstring).
 
     Returns `None` for reCAPTCHA v3 (see module docstring — no generic,
