@@ -85,14 +85,13 @@ Flags, identical across all three:
 | `--allow-empty` | Write output even if every requested ticker came back empty. |
 | `--headed` | Launch a visible browser instead of headless (debugging). |
 | `--executable-path PATH` | Use an already-installed Chrome/Chromium instead of this engine's own bundled-browser download. Normally unnecessary — see Engine notes for the one confirmed case where it isn't. |
-| `--block-retries N` | On a blocked outcome, retry that ticker on the SAME browser/session this many extra times before giving up ("retry before you rotate"). Default 2. |
+| `--block-retries N` | On a blocked outcome, retry that ticker on the SAME browser/session this many extra times before giving up ("retry before you rotate"). Default 2; `0` means one fetch and no retry; a negative value is rejected (exit 2). At most one paid captcha solve is bought per ticker, however many retries, and only when a retry follows to use it. |
 
 ### 2Captcha toolkit — opt-in, not required for a normal run
 
 Added 2026-09-28, after a real Cloudflare block was observed in a
 pre-release audit (see "What's actually in front of the site" below).
-**Unlike shein-scraper/g2-scraper, this repo has never observed an
-actual CAPTCHA widget** — the one real block seen was a Cloudflare
+**This repo has never observed an actual CAPTCHA widget** — the one real block seen was a Cloudflare
 "Just a moment..." JS interstitial (a browser-fingerprinting challenge a
 real browser normally clears on its own), not a confirmed Turnstile/
 hCaptcha/reCAPTCHA challenge. `captcha_solver.py`'s detection/solving is
@@ -124,9 +123,8 @@ documented exceptions:
 **`--scraper-api`** sends one browserless HTTP call to 2Captcha's Scraper
 API (`scraper.2captcha.com`) instead of launching any local or
 `--cdp-endpoint` browser. Requires `--twocaptcha-key`/`TWOCAPTCHA_KEY`.
-**This repo's own divergence from shein-scraper/g2-scraper**: those
-siblings point the Scraper API at the rendered page and parse embedded
-state out of the returned HTML. This repo's parser instead needs the
+**It fetches the JSON endpoint, not the rendered page**: this repo's
+parser needs the
 same-origin `stock-analysis/payload.json` JSON endpoint, normally
 fetched via an authenticated in-page `fetch()` call — the Scraper API
 can't run arbitrary page JS and hand back the result, so `--scraper-api`
@@ -150,10 +148,9 @@ for `--cdp-endpoint`. It never touches a caller-supplied
 faked Scraper API response), but not yet exercised against a real
 2Captcha/tipranks.com session** — see `CHANGELOG.md` and `TESTING.md`.
 
-**Scoping decision, stated plainly**: unlike shein-scraper/g2-scraper
-(fresh proxy per scroll round), this repo picks ONE proxy for the whole
-run and does not rotate mid-run — a per-ticker JSON fetch loop doesn't
-carry the volume that rotation was built for.
+**Scoping decision, stated plainly**: this repo picks ONE proxy for the
+whole run and does not rotate mid-run — a per-ticker JSON fetch loop
+doesn't carry the volume that proxy rotation is built for.
 
 Credentials belong in `.env` / `TIPRANKS_PROXY` / `TIPRANKS_CDP_ENDPOINT`
 / `TWOCAPTCHA_KEY` — never as literal `--proxy`/`--cdp-endpoint`/
@@ -170,8 +167,8 @@ Same exit codes across all three engines:
 | 1 | crashed |
 | 2 | bad usage (no tickers given, robots.txt disallows a path, ...) |
 | 3 | blocked (a real 403/429, or the confirmed Cloudflare interstitial's own body/URL markers — see below) |
-| 4 | zero results |
-| 5 | remote API error (navigation/network failure) |
+| 4 | zero results (every ticker answered "not found") |
+| 5 | no rows obtained: navigation/network failure, or a served payload the parser could not read (status `parser_failed`) |
 | 6 | partial (some tickers failed, others succeeded) |
 
 A run where every requested ticker fails and none complete is `5`
@@ -188,7 +185,15 @@ result by default. Output and sidecar are replaced atomically and new
 sidecars carry an output checksum that `diff_runs.py` verifies. An unknown
 ticker (real 404/400 from the site) is
 recorded as a *completed* ticker that contributed zero rows, not a
-failure — only a network/navigation error counts against the run.
+failure. A served payload whose stock list no longer contains the
+ticker's record (or has no stock list at all) is a parser failure
+instead: the ticker counts as failed and is listed under
+`parser_failed_tickers` in the sidecar, so a page-shape change is never
+reported as "this ticker does not exist". CSV output prefixes text cells
+that start with `=`, `+`, `-`, `@`, a tab or a line break with `'` so a
+spreadsheet does not run them as formulas (JSON is never altered); the
+sidecar's `csv_cells_escaped` counts them. New output files get the
+permissions your umask allows; an existing file keeps its mode.
 
 `diff_runs.py old.json new.json` compares two completed runs: added /
 removed tickers, and per-ticker rating / price-target / Smart Score
@@ -225,14 +230,13 @@ moment...", a `__cf_chl_rt_tk` token on the final URL) on the page
 navigation, in a local headless Playwright run, after an earlier run from
 the same environment had already completed successfully — a behavior-
 triggered challenge, not a first-request block. The scraper reports that
-as exit 3. **Updated 2026-09-28**: the daily live canary's very first run
-hit exactly this — a real block from GitHub Actions' own datacentre IP —
-and the canary now reports it as a workflow warning annotation rather
-than failing the job (see CONTRIBUTING.md and the workflow's own
-comments); a crash or bad-usage exit (a real bug) still fails it. So the
-canary's green badge means "the CLI ran without crashing", not "data was
-definitely collected" — check the run's uploaded `canary_out.json.meta.json`
-artifact for that, or look for a warning annotation on a green run.
+as exit 3. GitHub Actions' own datacentre IPs are refused the same way:
+every scheduled canary run from 2026-10-01 to 2026-10-15 ended blocked
+with 0 rows. The canary's `canary-live` job therefore runs through the
+`TIPRANKS_PROXY` or `TIPRANKS_CDP_ENDPOINT` repository secret, and is red
+unless it collects real, fully parsed rows; without either secret it
+fails with an error naming them. A separate `canary-datacentre` job keeps
+trying the runner's own IP and reports the expected refusal as a notice.
 
 ## Engine notes
 
@@ -276,7 +280,7 @@ list and the live-testing checklist.
   solving plumbing is shipped for family parity and may simply find
   nothing to solve; see "2Captcha toolkit" above.
 - `--scraper-api` fetches `payload.json` directly instead of the
-  rendered page (unlike shein-scraper/g2-scraper); whether that endpoint
+  rendered page; whether that endpoint
   answers a fresh, cookie-less request the way it answers the in-page
   fetch is untested — see "2Captcha toolkit" above.
 - `--scraper-api-cdp` is wired and unit-tested but not yet exercised
@@ -290,4 +294,4 @@ list and the live-testing checklist.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 - No `local_e2e_test.py` — see `TESTING.md` for why a single ticker fetch
-  doesn't need one the way a paginated/proxy-rotating sibling does.
+  doesn't need one the way a paginated, proxy-rotating scraper does.

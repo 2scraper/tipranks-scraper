@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """selenium_scraper.py — Selenium engine for tipranks-scraper. Same CLI
-flags, exit codes, and `TickerRating` schema as `playwright_scraper.py`
-(CLAUDE.md §4); see that file's module docstring for the shared flow and
+flags, exit codes, and `TickerRating` schema as `playwright_scraper.py`;
+see that file's module docstring for the shared flow and
 for the 2026-09-28 toolkit addition's own rationale (why: a real
 Cloudflare block, not a confirmed CAPTCHA widget — see that file and
 `captcha_solver.py`'s module docstrings for the honesty caveat this
@@ -33,8 +33,7 @@ actually observed is caught here too, even though a *hypothetical*
 differently-shaped block that returns neither a checked marker nor a
 403/429 on the in-page fetch still would not be, same as before.
 
-**Selenium's two standing CLAUDE.md §6 limits, same as every sibling
-repo**:
+**Selenium's two standing limits on this repo**:
 
   - `--cdp-endpoint` is refused outright (`EXIT_BAD_USAGE`) when it
     carries credentials — chromedriver's `debuggerAddress` takes a bare
@@ -75,8 +74,8 @@ except ImportError:  # pragma: no cover - exercised by smoke_test.py with no eng
     webdriver = None
     Options = None
 
-from captcha_solver import CaptchaType, build_injection_script, solve_when_blocked
-from env_config import apply_env
+from captcha_solver import CaptchaType, SolveBudget, build_injection_script, solve_when_blocked
+from env_config import apply_env, int_between, non_negative_int
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run
 from proxy_pool import Proxy, ProxyParseError, ProxyPool, load_proxies, redact_credentials
@@ -85,6 +84,7 @@ from tipranks_parser import (
     BLOCK_BODY_MARKERS,
     BLOCK_URL_MARKERS,
     is_allowed,
+    missing_record_kind,
     normalize_ticker,
     parse_payload,
     ticker_page_url,
@@ -96,7 +96,7 @@ log = logging.getLogger("tipranks.selenium")
 
 ENGINE_NAME = "selenium"
 
-# --- site-specific engine constants (CLAUDE.md §5) ---
+# --- site-specific engine constants ---
 NAV_TIMEOUT_S = 30
 READINESS_WAIT_S = 2  # the SPA's own payload fetch happens right after load
 
@@ -176,7 +176,7 @@ def fetch_one(driver, ticker: str) -> Tuple[Optional[TickerRating], Optional[str
     except (TypeError, ValueError, AttributeError):
         return None, "remote_api_error"
     if rating is None:
-        return None, "not_found"
+        return None, missing_record_kind(payload)
     return rating, None
 
 
@@ -184,7 +184,7 @@ def _fetch_one_via_scraper_api(
     ticker: str, *, client: TwoCaptchaClient, timeout: int, cdp_url: Optional[str],
 ) -> Tuple[Optional[TickerRating], Optional[str]]:
     """Identical logic to playwright_scraper.py's own copy — duplicated
-    per engine per this family's own convention (CLAUDE.md §4), since
+    per engine per this family's own convention, since
     this mode uses no browser/driver at all and has nothing engine-
     specific to say. See that function's docstring for the untested
     assumption this rests on (whether `payload.json` answers a fresh,
@@ -220,12 +220,13 @@ def _fetch_one_via_scraper_api(
     except (TypeError, ValueError, AttributeError):
         return None, "remote_api_error"
     if rating is None:
-        return None, "not_found"
+        return None, missing_record_kind(payload)
     return rating, None
 
 
 def _maybe_solve_captcha(
     *, client: Optional[TwoCaptchaClient], driver, ticker: str, policy: str, min_score: float,
+    budget: SolveBudget,
 ) -> None:
     """Selenium equivalent of playwright_scraper.py's own helper — same
     "called only from an already-confirmed blocked outcome, no-op is
@@ -234,7 +235,7 @@ def _maybe_solve_captcha(
     Selenium equivalent of `_enable_scraping_browser_auto_solve` because
     a credentialed `--cdp-endpoint` (the only case that would arm one) is
     refused outright on this engine (see module docstring)."""
-    if client is None or policy == "off":
+    if client is None or policy == "off" or budget.remaining <= 0:
         return
     try:
         html = driver.page_source
@@ -245,6 +246,7 @@ def _maybe_solve_captcha(
         client=client, page_url=url, html=html,
         count_product_links=lambda _h: 0,
         extra_markers=BLOCK_BODY_MARKERS, min_score=min_score,
+        budget=budget,
     )
     action = result.get("action")
     if action == "solved":
@@ -279,8 +281,7 @@ def _make_driver(
         # The browser binary (Chrome/Chromium itself), not chromedriver —
         # Selenium calls that `binary_location`, unlike Playwright's/
         # pyppeteer's `executable_path`/`executablePath` for the same
-        # concept. Kept for CLI parity with the other two engines
-        # (CLAUDE.md §4).
+        # concept. Kept for CLI parity with the other two engines.
         options.binary_location = executable_path
     if user_agent:
         options.add_argument(f"--user-agent={user_agent}")
@@ -315,9 +316,9 @@ def run(
     solve_captcha_policy: str = "when-blocked",
     min_score: float = 0.3,
     block_retries: int = 0,
-) -> Tuple[List[TickerRating], List[str], List[str], List[str]]:
+) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """Returns (ratings, tickers_completed, failed_tickers,
-    blocked_tickers) — same contract as playwright_scraper.run(). See
+    blocked_tickers, parser_failed_tickers) — same contract as playwright_scraper.run(). See
     that function's own docstring for the "one proxy for the whole run,
     no mid-run rotation" scoping decision, which applies unchanged here."""
     if webdriver is None:
@@ -327,6 +328,7 @@ def run(
     completed: List[str] = []
     failed: List[str] = []
     blocked: List[str] = []
+    parser_failed: List[str] = []
 
     proxy = proxy_pool.next() if proxy_pool else None
     try:
@@ -338,20 +340,25 @@ def run(
             "Driver/CDP connection failed — treating as remote_api_error, not a crash: %s",
             redact_credentials(str(exc)),
         )
-        return ratings, completed, list(tickers), blocked
+        return ratings, completed, list(tickers), blocked, parser_failed
 
     try:
         for ticker in tickers:
             rating = None
             error_kind = None
+            # One paid-solve allowance per ticker, shared by every retry.
+            budget = SolveBudget()
             for attempt in range(block_retries + 1):
                 rating, error_kind = fetch_one(driver, ticker)
                 if error_kind != "blocked":
                     break
-                if client is not None:
+                # Only solve when a retry follows: a token bought on the
+                # last attempt would never be used.
+                if client is not None and attempt < block_retries:
                     _maybe_solve_captcha(
                         client=client, driver=driver, ticker=ticker,
                         policy=solve_captcha_policy, min_score=min_score,
+                        budget=budget,
                     )
                 if attempt < block_retries:
                     log.warning(
@@ -365,25 +372,30 @@ def run(
             if error_kind == "remote_api_error":
                 failed.append(ticker)
                 continue
+            if error_kind == "parser_failed":
+                failed.append(ticker)
+                parser_failed.append(ticker)
+                continue
             completed.append(ticker)
             if rating is not None:
                 ratings.append(rating)
     finally:
         driver.quit()
 
-    return ratings, completed, failed, blocked
+    return ratings, completed, failed, blocked, parser_failed
 
 
 def _run_via_scraper_api(
     tickers: List[str], *, client: TwoCaptchaClient, timeout: int, cdp_url: Optional[str],
     block_retries: int,
-) -> Tuple[List[TickerRating], List[str], List[str], List[str]]:
+) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """Identical to playwright_scraper.py's own copy — no browser/driver
     concepts apply in this mode."""
     ratings: List[TickerRating] = []
     completed: List[str] = []
     failed: List[str] = []
     blocked: List[str] = []
+    parser_failed: List[str] = []
 
     for ticker in tickers:
         rating = error_kind = None
@@ -403,11 +415,15 @@ def _run_via_scraper_api(
         if error_kind == "remote_api_error":
             failed.append(ticker)
             continue
+        if error_kind == "parser_failed":
+            failed.append(ticker)
+            parser_failed.append(ticker)
+            continue
         completed.append(ticker)
         if rating is not None:
             ratings.append(rating)
 
-    return ratings, completed, failed, blocked
+    return ratings, completed, failed, blocked, parser_failed
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -425,7 +441,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "own bundled-browser download (maps to Selenium's binary_location).",
     )
     parser.add_argument(
-        "--block-retries", type=int, default=2,
+        "--block-retries", type=non_negative_int, default=2,
         help="On a blocked outcome, retry that ticker on the SAME browser/session (same exit IP, "
              "same device identity) this many extra times before giving up — 'retry before you "
              "rotate', not a proxy/session swap. Default 2, matching the rest of the family.",
@@ -437,7 +453,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--captcha-api", default=None, help="Override the 2Captcha API base URL (testing only)")
     parser.add_argument(
         "--solve-captcha", choices=["off", "when-blocked", "always"], default="when-blocked",
-        help="'always' is accepted for CLI parity with every sibling repo, but behaves the same "
+        help="'always' is accepted for CLI parity with other 2scraper tools, but behaves the same "
              "as 'when-blocked' here — this repo has no 'products already present' state a captcha "
              "solve should be skipped for (a ticker fetch is either blocked or it isn't).",
     )
@@ -455,7 +471,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--scraper-api", action="store_true",
         help="Fetch via 2Captcha's Scraper API (scraper.2captcha.com) instead of launching any local "
-             "or --cdp-endpoint browser. Requires --twocaptcha-key/TWOCAPTCHA_KEY. Unlike sibling "
+             "or --cdp-endpoint browser. Requires --twocaptcha-key/TWOCAPTCHA_KEY. Unlike other 2scraper "
              "repos, this fetches ticker_payload_url() directly (the JSON endpoint), not the "
              "rendered page — see playwright_scraper.py's _fetch_one_via_scraper_api() docstring for "
              "the untested assumption this rests on. --headed/--executable-path/--proxy/"
@@ -463,7 +479,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "ticker has no browser session, and brings its own exit IP/device) — set together, "
              "they log a warning rather than silently doing nothing.",
     )
-    parser.add_argument("--scraper-api-timeout", type=int, default=60, help="Seconds 2Captcha itself waits for the target page to finish loading (1-120, their limit)")
+    parser.add_argument("--scraper-api-timeout", type=int_between(1, 120), default=60, help="Seconds 2Captcha itself waits for the target page to finish loading (1-120, their limit)")
     parser.add_argument("--scraper-api-url", default=None, help="Override the Scraper API base URL (testing only)")
     parser.add_argument(
         "--scraper-api-cdp", action="store_true",
@@ -535,7 +551,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 country=args.scraper_api_country, profile_id=args.scraper_api_profile_id,
             )
         try:
-            ratings, completed, failed, blocked_tickers = _run_via_scraper_api(
+            ratings, completed, failed, blocked_tickers, parser_failed = _run_via_scraper_api(
                 tickers, client=client, timeout=args.scraper_api_timeout, cdp_url=cdp_url,
                 block_retries=args.block_retries,
             )
@@ -591,7 +607,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     user_agent = user_agent_from(profile)
 
         try:
-            ratings, completed, failed, blocked_tickers = run(
+            ratings, completed, failed, blocked_tickers, parser_failed = run(
                 tickers,
                 headless=not args.headed,
                 executable_path=args.executable_path,
@@ -616,6 +632,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         tickers_completed=completed,
         failed_tickers=failed,
         blocked=bool(blocked_tickers),
+        parser_failed_tickers=parser_failed,
         remote_api_error=(
             bool(set(failed) - set(blocked_tickers)) and not completed
         ),

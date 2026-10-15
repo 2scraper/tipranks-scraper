@@ -6,12 +6,56 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+> **Behaviour changes.**
+> - `--block-retries` now rejects a negative value with a usage error
+>   (exit 2). Before, `-1` made no request at all and reported an empty
+>   run (exit 4). `--scraper-api-timeout` outside 1-120 is rejected too.
+> - A served payload whose stock list no longer yields the requested
+>   ticker is a parser failure: the ticker counts as failed, a run of
+>   nothing else exits 5 with status `parser_failed` (was exit 4,
+>   "empty"), and a run with other rows exits 6. An empty stock list or a
+>   real 404/400 is still "not found".
+> - New output files get the mode the umask allows (0600 under umask 077,
+>   0664 under 002) instead of a fixed 0644; an existing file keeps its
+>   mode.
+> - The daily canary now fails unless it collects real rows. Its live job
+>   needs the `TIPRANKS_PROXY` or `TIPRANKS_CDP_ENDPOINT` repository
+>   secret and fails with an error naming them when neither is set.
+> - `diff_runs.py` exits 2 when it refuses to compare (missing sidecar,
+>   incomplete run, checksum mismatch), instead of 1, which
+>   `--fail-on-change` uses for "changes found".
+
+### Fixed — 2026-10-14 audit
+
+- Paid captcha solves are capped at one per ticker in every engine. Before,
+  the number of purchases grew with `--block-retries` (3 per blocked ticker
+  at the default, 11 at `--block-retries 10`). The allowance is checked
+  immediately before each purchase, retries do not reset it, and no solve
+  is bought on the last attempt, where no retry would use the token.
+- CSV output prefixes text cells starting with `=`, `+`, `-`, `@`, a tab
+  or a line break with `'`, so site-provided text cannot run as a
+  spreadsheet formula. Numbers and JSON output are unchanged. The sidecar
+  records the count as `csv_cells_escaped` (a caller's own `extra_meta`
+  still wins on a clash) and lists `parser_failed_tickers`.
+- `.gitignore` covers every `.env*` copy (`.env.bak`, `.env.local`, ...)
+  except `.env.example`, plus raw capture shapes; `.dockerignore` keeps
+  them out of an image build context.
+- The credential scan finds keys inside JSON-escaped fixtures and bare
+  32-hex 2Captcha-key shapes, also reads ignored `.env.*` backups, skips
+  any directory holding a `pyvenv.cfg` whatever its name, exempts files
+  from specific rules only (no longer whole files), and fails when it read
+  no files at all.
+- Source comments, docstrings, help text and docs no longer cite private
+  maintainer notes or compare this repo with other scrapers; the rules
+  are stated directly. A suite check keeps such citations out.
+- `run()` in each engine returns a fifth list, the parser-failed tickers.
+
 ### Fixed — 2026-09-28, `canary.yml` failing on a real (expected) datacentre-IP block
 
 - Canary run #1 — its first fire ever, scheduled — hit a real block:
   TipRanks refused the scrape from GitHub Actions' own datacentre IP for
   all three test tickers (`exit=3, status=blocked`). The job failed
-  (red badge), which surprised Roman since `CONTRIBUTING.md` already
+  (red badge), although `CONTRIBUTING.md` already
   promised the opposite: "a live-site block from a datacentre IP is a
   reported warning there, not a merge-blocking failure" — a promise the
   workflow itself never actually implemented.
@@ -42,7 +86,7 @@ All notable changes to this project are documented here. Format follows
   `--captcha-api`/`--solve-captcha`/`--min-score`, and `--scraper-api`/
   `--scraper-api-timeout`/`--scraper-api-url`/`--scraper-api-cdp`/
   `--scraper-api-country`/`--scraper-api-profile-id`, identical across
-  all three engines (CLAUDE.md §4). New shared modules `env_config.py`,
+  all three engines. New shared modules `env_config.py`,
   `proxy_pool.py`, `captcha_solver.py`, `fingerprint_client.py`,
   `scraper_api_client.py`, and a new `.env.example`.
   **Why, stated plainly**: unlike every other family member, this repo
@@ -76,7 +120,7 @@ All notable changes to this project are documented here. Format follows
   answers the in-page authenticated fetch is a genuinely untested
   assumption, stated plainly in `_fetch_one_via_scraper_api()`'s own
   docstring — confirm live before relying on it (TESTING.md).
-  **Selenium's own standing CLAUDE.md §6 limits apply here too**:
+  **Selenium's own standing limits apply here too**:
   `--cdp-endpoint` is refused outright (`EXIT_BAD_USAGE`) when it carries
   credentials (chromedriver cannot authenticate a remote CDP session);
   `--proxy` credentials are stripped before reaching Chrome's
@@ -122,8 +166,8 @@ All notable changes to this project are documented here. Format follows
   `COPY`'d into the image (deliberately — they're contributor metadata,
   not something the shipped image needs), so it failed with a bare
   `FileNotFoundError` instead of skipping. `diff_runs.py` is now in the
-  `COPY` list (it's shipped, family-shared functionality per CLAUDE.md
-  Sec.7, not test-only); the version/changelog check now skips cleanly
+  `COPY` list (it's shipped, family-shared functionality, not
+  test-only); the version/changelog check now skips cleanly
   when either file is absent, the same way the credential-scanner check
   already did.
 
@@ -166,7 +210,7 @@ All notable changes to this project are documented here. Format follows
   `fetch_one()` only caught `PlaywrightTimeoutError` around `page.goto()`,
   so any other navigation failure (DNS, connection refused, a broken
   proxy/tunnel) propagated up as `EXIT_CRASH` (1) instead of `EXIT_
-  REMOTE_API_ERROR` (5), violating CLAUDE.md §10. Selenium and Puppeteer
+  REMOTE_API_ERROR` (5), although a network failure is not a crash. Selenium and Puppeteer
   already caught navigation failures broadly; Playwright now matches them.
 - Reject unsafe ticker path/query input before URL construction
   (`tipranks_parser.normalize_ticker()`); trim and canonicalize valid

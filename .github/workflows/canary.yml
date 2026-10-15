@@ -9,27 +9,96 @@ permissions:
   contents: read
 
 jobs:
-  # A real run against real tickers. Unlike this project's siblings, this
-  # one needs no secret at all — the ticker page is free, public data
-  # (see SECURITY.md) — so this canary runs unconditionally rather than
-  # skipping behind an optional-secret gate.
-  #
-  # This is an availability canary. A crash or bad-usage exit (1/2) is a
-  # real bug in this repo and fails the job. A live-site block from a
-  # datacentre IP (exit 3) is useful diagnostic context, not a bug this
-  # repo can fix by itself (see CONTRIBUTING.md) -- it's reported loudly
-  # as a workflow warning annotation, with the run's meta.json still
-  # uploaded, but does NOT fail the job or turn the badge red. That
-  # matches CONTRIBUTING.md's contributor-facing description, which this
-  # workflow did not actually implement until 2026-09-28 (canary run #1
-  # hit a real datacentre-IP block on its very first live fire and failed
-  # the job on it, contradicting that doc -- see CHANGELOG.md). A green
-  # badge therefore means "ran without crashing", not "definitely got
-  # through to real data" -- check the uploaded meta.json artifact for
-  # that. Zero-products/remote-api-error/partial (4/5/6) still fail the
-  # job: unlike a block, those can also mean this repo's own parser or
-  # wiring broke, not just an external condition.
+  # The canary that must prove the site still serves real rows. A GitHub
+  # runner's datacentre IP gets Cloudflare's 403 "Just a moment..." page
+  # from tipranks.com (every scheduled run from 2026-10-01 to 2026-10-15
+  # ended blocked with 0 rows), so this job needs a different exit: the
+  # TIPRANKS_PROXY secret (a residential proxy URL) or the
+  # TIPRANKS_CDP_ENDPOINT secret (a Scraping Browser connection string).
+  # Without either, it FAILS with an error naming them: a canary that
+  # never reached the site is not a passing canary. Blocked (3), no rows
+  # obtained (5), partial (6), empty (4) or zero ratings are all red.
   canary-live:
+    runs-on: ubuntu-latest
+    env:
+      TIPRANKS_PROXY: ${{ secrets.TIPRANKS_PROXY }}
+      TIPRANKS_CDP_ENDPOINT: ${{ secrets.TIPRANKS_CDP_ENDPOINT }}
+    steps:
+      - name: Require a secret that can reach the site
+        run: |
+          if [ -z "$TIPRANKS_PROXY" ] && [ -z "$TIPRANKS_CDP_ENDPOINT" ]; then
+            echo "::error::canary NOT RUN: neither the TIPRANKS_PROXY nor the TIPRANKS_CDP_ENDPOINT repository secret is set. A GitHub runner's own IP is refused by tipranks.com, so without one this canary cannot test the live site."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install -r requirements-playwright.txt
+          playwright install --with-deps chromium
+
+      - name: Scrape a handful of real tickers (through the secret's exit)
+        run: |
+          set +e
+          # TIPRANKS_PROXY / TIPRANKS_CDP_ENDPOINT reach the scraper through
+          # this job's env (env_config.py reads them); never on the command line.
+          python3 playwright_scraper.py \
+            --ticker AAPL --ticker MSFT --ticker GOOGL \
+            --format json --out canary_out.json --allow-empty
+          echo "exit_code=$?" >> "$GITHUB_ENV"
+
+      - name: Require real, parsed rows
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys
+
+          code = int(os.environ["exit_code"])
+          print(f"playwright_scraper.py exited {code}")
+          if not os.path.exists("canary_out.json.meta.json"):
+              print(f"::error::exit {code} and no sidecar was written")
+              sys.exit(1)
+          meta = json.load(open("canary_out.json.meta.json"))
+          print(json.dumps(meta, indent=2))
+          if code != 0 or meta.get("status") != "complete":
+              print(f"::error::live scrape did not complete: exit={code}, status={meta.get('status')}, failed={meta.get('failed_tickers')}")
+              sys.exit(1)
+
+          rows = json.load(open("canary_out.json"))
+          tickers = sorted(r["ticker"] for r in rows)
+          if tickers != ["AAPL", "GOOGL", "MSFT"]:
+              print(f"::error::expected one row per requested ticker, got {tickers}")
+              sys.exit(1)
+          # Parser checks, not market checks: every one of these large caps
+          # has a company name, analyst coverage, a consensus and a price
+          # target on its page. A null here means the parser lost a field.
+          core = ("company_name", "analyst_count", "consensus_rating_id", "price_target_average")
+          bad = [(r["ticker"], f) for r in rows for f in core if r.get(f) in (None, "", 0)]
+          if bad:
+              print(f"::error::core fields missing (parser drift?): {bad}")
+              sys.exit(1)
+          print(f"canary: {len(rows)} real ratings with every core field present")
+          EOF
+
+      - name: Upload the run's output on every attempt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-live-${{ github.run_id }}
+          path: |
+            canary_out.json
+            canary_out.json.meta.json
+          retention-days: 14
+
+  # Datacentre refusal expected: this job runs the default, no-key,
+  # no-proxy path from the bare GitHub runner. tipranks.com has refused it
+  # with exit 3 since 2026-10-01, which is reported as a notice so the day
+  # it starts serving datacentre IPs again is visible. It does NOT test
+  # real data on its own: canary-live above does. A crash, bad usage, a
+  # parser failure or any other non-blocked failure is still red, and if
+  # it does get through, the rows must be real.
+  canary-datacentre:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,61 +122,41 @@ jobs:
           print('robots.txt rules match the reviewed capture')
           "
 
-      - name: Scrape a handful of real tickers
+      - name: Scrape from the runner's own IP
         run: |
           set +e
           python3 playwright_scraper.py \
             --ticker AAPL --ticker MSFT --ticker GOOGL \
-            --format json --out canary_out.json --allow-empty
+            --format json --out canary_dc.json --allow-empty
           echo "exit_code=$?" >> "$GITHUB_ENV"
 
-      - name: Validate the live result
-        id: validate
+      - name: Classify the result
         run: |
-          python3 -c "
+          python3 - <<'EOF'
           import json, os, sys
 
-          code = int(os.environ['exit_code'])
-          print(f'playwright_scraper.py exited {code}')
-
-          if code in (1, 2):
-              print(f'::error::exit {code} means crashed or bad usage — a real bug, not a site condition')
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as gh_out:
-                  print('verdict=bug', file=gh_out)
+          code = int(os.environ["exit_code"])
+          print(f"playwright_scraper.py exited {code}")
+          meta = {}
+          if os.path.exists("canary_dc.json.meta.json"):
+              meta = json.load(open("canary_dc.json.meta.json"))
+              print(json.dumps(meta, indent=2))
+          if code == 3:
+              print("::notice::datacentre IP refused (exit 3), as expected; canary-live is the data check")
               sys.exit(0)
-
-          meta = json.load(open('canary_out.json.meta.json'))
-          print(json.dumps(meta, indent=2))
-
-          if code == 0:
-              assert meta['status'] == 'complete'
-              assert meta['rating_count'] >= 1
-              print(f\"canary: got {meta['rating_count']} real ratings\")
-              verdict = 'ok'
-          elif code == 3:
-              # A datacentre-IP block is a site condition, not a bug this
-              # repo can fix on its own — see CONTRIBUTING.md and this
-              # job's own top-level comment. Reported loudly, doesn't fail.
-              print(f\"::warning::live scrape blocked (datacentre IP): exit=3, status={meta.get('status')}, failed={meta.get('failed_tickers')} — see canary_out.json.meta.json in this run's uploaded artifact\")
-              verdict = 'blocked'
-          else:
-              print(f\"::error::live scrape unavailable: exit={code}, status={meta.get('status')}, failed={meta.get('failed_tickers')}\")
-              verdict = 'bug'
-
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as gh_out:
-              print(f'verdict={verdict}', file=gh_out)
-          "
-
-      - name: Fail the job on a real bug (never on a reported datacentre-IP block)
-        if: steps.validate.outputs.verdict == 'bug'
-        run: exit 1
+          if code == 0 and meta.get("rating_count", 0) >= 1:
+              print(f"::notice::the runner's own IP got {meta['rating_count']} ratings: the datacentre refusal has lifted")
+              sys.exit(0)
+          print(f"::error::exit={code}, status={meta.get('status')}, failed={meta.get('failed_tickers')}")
+          sys.exit(1)
+          EOF
 
       - name: Upload the run's output on every attempt
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: canary-live-${{ github.run_id }}
+          name: canary-datacentre-${{ github.run_id }}
           path: |
-            canary_out.json
-            canary_out.json.meta.json
+            canary_dc.json
+            canary_dc.json.meta.json
           retention-days: 14

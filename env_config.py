@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""env_config.py — hand-rolled .env loader, no site knowledge. Copied
-near-verbatim from the newest sibling family member (shein-scraper) per
-CLAUDE.md §7 — this file carries no tipranks-specific logic beyond
-`ENV_KEYS` below.
+"""env_config.py — hand-rolled .env loader, no site knowledge. This file
+carries no tipranks-specific logic beyond `ENV_KEYS` below.
 
 Precedence, highest first: explicit CLI flag > exported environment variable
 > `.env` file > argparse default. That order matters in both directions: a
@@ -34,6 +32,32 @@ from typing import Dict, Optional
 
 log = logging.getLogger("env_config")
 
+
+def non_negative_int(value: str) -> int:
+    """argparse `type=` for a count of extra attempts: 0 is allowed (one
+    fetch, no retry); a negative number would skip the fetch entirely and
+    report an empty run, so it is a usage error naming the flag."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {number}")
+    return number
+
+
+def int_between(low: int, high: int):
+    """argparse `type=` for an integer that must lie in [low, high]."""
+    def parse(value: str) -> int:
+        try:
+            number = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+        if not low <= number <= high:
+            raise argparse.ArgumentTypeError(f"must be between {low} and {high}, got {number}")
+        return number
+    return parse
+
 try:
     from dotenv import dotenv_values as _dotenv_values  # type: ignore
 except ImportError:  # pragma: no cover - exercised by the "no dotenv" path
@@ -54,7 +78,7 @@ ENV_KEYS: Dict[str, str] = {
 }
 
 _PLACEHOLDER_RE = re.compile(r"^\s*$")
-# CLAUDE.md §17: a copied .env.example can document a credentialled URL the
+# A copied .env.example can document a credentialled URL the
 # way the vendor documents it — `ws://{login}-zone-...-pid-{profileId}:
 # {password}@cb.2captcha.com:9222` — and a literal-placeholder check (an
 # exact string like "your_key_here") never matches that shape, so pasting
@@ -70,9 +94,8 @@ _BRACED_PLACEHOLDER_RE = re.compile(r"[{}]")
 
 
 def _is_placeholder(value: Optional[str]) -> bool:
-    """One implementation, used by both apply_env() and _report() — CLAUDE.md
-    §17 names the alternative (two independent checks that quietly drift
-    apart) as its own defect class. True for an empty value, or one that
+    """One implementation, used by both apply_env() and _report(): two
+    independent checks for the same thing quietly drift apart. True for an empty value, or one that
     still contains a `{...}` example fragment."""
     if value is None:
         return True

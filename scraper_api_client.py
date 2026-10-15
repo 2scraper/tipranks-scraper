@@ -3,9 +3,7 @@
 surface. No site knowledge. `captcha_solver.py` and `fingerprint_client.py`
 both sit on top of this rather than calling `requests` directly, so there is
 exactly one place that knows the base URL, auth shape and error envelope.
-Copied near-verbatim from the newest sibling (shein-scraper) per CLAUDE.md
-§7 — see that repo for where each product below was actually confirmed
-live; none of it has been exercised against tipranks.com yet (added to
+None of it has been exercised against tipranks.com yet (added to
 this repo 2026-09-28, see CHANGELOG.md and TESTING.md).
 
 Covers four of 2Captcha's five separately-billed products behind one key
@@ -27,10 +25,8 @@ separate host):
     Lives on its own hostname (`scraper.2captcha.com`, not
     `api.2captcha.com`) with its own Bearer-token auth, which is why it
     gets its own `scraper_api_base` override rather than reusing
-    `self.api_base`. Confirmed live against shein.com (a sibling repo, a
-    genuinely different site with a genuinely different fetch shape —
-    see `_scrape_via_scraper_api()`'s module comment in each engine for
-    why this repo points it at `ticker_payload_url()`, not the page URL);
+    `self.api_base`. See `_fetch_one_via_scraper_api()` in each engine for
+    why this repo points it at `ticker_payload_url()`, not the page URL.
     NOT yet exercised against tipranks.com. `scrape_url()`'s `cdp_url`
     parameter (below), which every engine's `--scraper-api-cdp` fills,
     routes this fetch through 2Captcha's own Scraping Browser instead of
@@ -74,9 +70,7 @@ class ScrapeResult:
     """One Scraper API `/tasks/sync` response. `target_status` is the
     TARGET page's own HTTP status (tipranks.com's, not 2Captcha's) — the
     one real block this repo has observed (CHANGELOG.md 0.2.0) was a
-    genuine HTTP 403, unlike shein.com's own risk gateway (which answers
-    200 for a challenge page too, per that sibling repo's own module
-    docstring), so `target_status >= 400` is a meaningful signal here on
+    genuine HTTP 403, so `target_status >= 400` is a meaningful signal here on
     its own. A caller should still additionally run
     `captcha_solver.detect_from_html(body, ...)` — a 200 response is not
     proof the Cloudflare "Just a moment..." interstitial wasn't shown
@@ -95,8 +89,8 @@ class TwoCaptchaClient:
         self.timeout = timeout
         # `--captcha-api` (testing only): override the base URL so a smoke
         # test or a local run can point this at a mock server instead of
-        # the real https://api.2captcha.com. CLAUDE.md §17 names the exact
-        # failure mode this guards against — a CLI flag defined on the
+        # the real https://api.2captcha.com. This guards against a known
+        # failure mode — a CLI flag defined on the
         # parser but never read by anything is "a documented feature not
         # working at all", found live in this family more than once.
         # `self.api_base` (an instance attribute, never the module-level
@@ -231,8 +225,7 @@ class TwoCaptchaClient:
         # Unlike createTask/getTaskResult/getBalance above, this endpoint
         # takes its key as a URL query parameter (`?key=...`), not a JSON
         # body — and `requests` puts the FULL URL, query string included,
-        # into the text of every HTTPError and connection error (CLAUDE.md
-        # §8 names this exact endpoint). Redact before raising, and drop
+        # into the text of every HTTPError and connection error. Redact before raising, and drop
         # the original exception from the chain (`from None`) so its own
         # unredacted text can't surface via "the above exception was the
         # direct cause of…".
@@ -281,8 +274,7 @@ class TwoCaptchaClient:
         (this endpoint alone has none) and the country pinning described
         in the module docstring. Documented by 2Captcha; a real caller
         now exists (`--scraper-api-cdp`), but neither this client nor any
-        engine has exercised it against a live 2Captcha/shein.com session
-        yet — confirmed wired, not a confirmed bypass or a confirmed
+        engine has exercised it against a live 2Captcha session yet — confirmed wired, not a confirmed bypass or a confirmed
         working captcha solve (TESTING.md)."""
         key = self._require_key()
         payload = {

@@ -18,13 +18,23 @@ import hashlib
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Sequence
+
+EXIT_REFUSED = 2
+
+
+class DiffRefused(SystemExit):
+    """A refusal to compare (missing sidecar, incomplete run, checksum
+    mismatch, unknown file type). `main()` reports it with exit 2, so it is
+    never confused with exit 1, which `--fail-on-change` uses for "changes
+    found". Still a SystemExit, so a caller that already catches that keeps
+    working."""
 
 
 def _load_meta(run_path: str) -> dict:
     meta_path = Path(f"{run_path}.meta.json")
     if not meta_path.exists():
-        raise SystemExit(f"error: no sidecar found at {meta_path} — was this run produced by finish_run()?")
+        raise DiffRefused(f"error: no sidecar found at {meta_path} — was this run produced by finish_run()?")
     return json.loads(meta_path.read_text(encoding="utf-8"))
 
 
@@ -36,7 +46,7 @@ def _load_rows(run_path: str) -> List[dict]:
         import csv
         with path.open(newline="", encoding="utf-8") as f:
             return list(csv.DictReader(f))
-    raise SystemExit(f"error: unsupported run file extension: {path.suffix}")
+    raise DiffRefused(f"error: unsupported run file extension: {path.suffix}")
 
 
 def _verify_output_hash(run_path: str, meta: dict) -> None:
@@ -47,7 +57,7 @@ def _verify_output_hash(run_path: str, meta: dict) -> None:
     path = Path(run_path)
     actual = hashlib.sha256(path.read_bytes()).hexdigest()
     if actual != expected:
-        raise SystemExit(
+        raise DiffRefused(
             f"error: output/sidecar checksum mismatch for {run_path}; "
             "the run may have been interrupted while saving"
         )
@@ -79,7 +89,7 @@ def diff(old_path: str, new_path: str) -> dict:
     _verify_output_hash(new_path, new_meta)
     for label, meta in (("old", old_meta), ("new", new_meta)):
         if meta.get("status") != "complete":
-            raise SystemExit(
+            raise DiffRefused(
                 f"error: refusing to diff — {label} run status is "
                 f"{meta.get('status')!r}, not 'complete'. A partial run's "
                 f"un-fetched tickers would read as delisted tickers."
@@ -124,16 +134,20 @@ def diff(old_path: str, new_path: str) -> dict:
     }
 
 
-def main() -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Diff two tipranks-scraper runs by ticker")
     p.add_argument("old_run")
     p.add_argument("new_run")
     p.add_argument("--fail-on-change", action="store_true",
                     help="Exit 1 if any rating or price-target change is found")
     p.add_argument("--json", action="store_true", help="Print the diff as JSON instead of a summary")
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
-    result = diff(args.old_run, args.new_run)
+    try:
+        result = diff(args.old_run, args.new_run)
+    except DiffRefused as exc:
+        print(exc.code, file=sys.stderr)
+        return EXIT_REFUSED
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

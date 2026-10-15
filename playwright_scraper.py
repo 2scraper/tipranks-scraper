@@ -13,10 +13,9 @@ cares about.
 
 **Added 2026-09-28**: `--proxy`/`--cdp-endpoint`/`--fingerprint`/
 `--twocaptcha-key`/`--solve-captcha`/`--scraper-api(-cdp)` — the same
-2Captcha-backed toolkit every other family member ships (CLAUDE.md §7),
-copied in after a real Cloudflare block was observed in a pre-release
-audit (CHANGELOG.md 0.2.0, `tipranks_parser.py`'s module docstring).
-Unlike shein.com/g2.com, this repo has NEVER observed an actual CAPTCHA
+2Captcha-backed toolkit, added after a real Cloudflare block was
+observed in a pre-release audit (CHANGELOG.md 0.2.0,
+`tipranks_parser.py`'s module docstring). This repo has NEVER observed an actual CAPTCHA
 widget — the one real block seen was a Cloudflare JS interstitial (HTTP
 403, body "Just a moment...", a `__cf_chl_rt_tk` URL token), which a real
 browser normally clears on its own rather than something with a solvable
@@ -26,7 +25,7 @@ backed mitigations (a fresh exit IP / a managed device identity);
 may simply find nothing to solve here — see that module's own docstring
 for the honesty caveat, and TESTING.md for what's actually confirmed.
 
-The handful of engine constants allowed to vary per site (CLAUDE.md §5)
+The handful of engine constants allowed to vary per site
 are directly below; nothing else here should need site-specific tuning.
 """
 from __future__ import annotations
@@ -44,8 +43,8 @@ try:
 except ImportError:  # pragma: no cover - exercised by smoke_test.py with no engine installed
     sync_playwright = None
 
-from captcha_solver import CaptchaType, build_injection_script, solve_when_blocked
-from env_config import apply_env
+from captcha_solver import CaptchaType, SolveBudget, build_injection_script, solve_when_blocked
+from env_config import apply_env, int_between, non_negative_int
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run
 from proxy_pool import ProxyParseError, ProxyPool, load_proxies, redact_credentials
@@ -54,6 +53,7 @@ from tipranks_parser import (
     BLOCK_BODY_MARKERS,
     BLOCK_URL_MARKERS,
     is_allowed,
+    missing_record_kind,
     normalize_ticker,
     parse_payload,
     ticker_page_url,
@@ -63,7 +63,7 @@ from tipranks_parser import (
 
 log = logging.getLogger("tipranks.playwright")
 
-# --- site-specific engine constants (CLAUDE.md §5) ---
+# --- site-specific engine constants ---
 NAV_TIMEOUT_MS = 30_000
 READINESS_WAIT_MS = 2_000  # the SPA's own payload fetch happens right after load
 
@@ -79,8 +79,7 @@ def _now_iso() -> str:
 
 
 def _enable_scraping_browser_auto_solve(context, page) -> None:
-    """Only meaningful over --cdp-endpoint — see the identical helper in
-    every sibling repo's playwright_scraper.py. Arms 2Captcha's own
+    """Only meaningful over --cdp-endpoint. Arms 2Captcha's own
     Captcha.setAutoSolve CDP domain, which solves AND injects entirely on
     THEIR side of the session — captcha_solver.py's local solve/inject
     path is skipped whenever this is in play (see that module's docstring
@@ -118,12 +117,14 @@ def _looks_blocked(status: Optional[int], url: str, html: str) -> bool:
 def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]:
     """Returns (rating_or_None, error_kind). error_kind is None on
     success, "not_found" for a real 404/400, "blocked" for a real 403/429
-    or a confirmed body/URL block marker, or "remote_api_error" for
+    or a confirmed body/URL block marker, "parser_failed" for a served
+    payload whose stock list no longer yields the ticker's record (see
+    tipranks_parser.missing_record_kind), or "remote_api_error" for
     anything else (nav timeout, non-JSON response, etc.) — never raises,
-    so one bad ticker can't take a multi-ticker run down with it
-    (CLAUDE.md §6). Captcha-solve/retry policy lives in run()'s per-ticker
+    so one bad ticker can't take a multi-ticker run down with it.
+    Captcha-solve/retry policy lives in run()'s per-ticker
     loop, not here — this stays a single fetch attempt, matching every
-    other engine's fetch_one (CLAUDE.md §4)."""
+    other engine's fetch_one."""
     page_url = ticker_page_url(ticker)
     payload_url = ticker_payload_url(ticker)
 
@@ -176,7 +177,7 @@ def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]
     except (TypeError, ValueError, AttributeError):
         return None, "remote_api_error"
     if rating is None:
-        return None, "not_found"
+        return None, missing_record_kind(payload)
     return rating, None
 
 
@@ -184,9 +185,8 @@ def _fetch_one_via_scraper_api(
     ticker: str, *, client: TwoCaptchaClient, timeout: int, cdp_url: Optional[str],
 ) -> Tuple[Optional[TickerRating], Optional[str]]:
     """--scraper-api's own fetch path for this repo: pointed at
-    `ticker_payload_url()`, the raw JSON endpoint — NOT the rendered page,
-    unlike shein-scraper/g2-scraper (which parse embedded state out of
-    rendered HTML). This repo's parser needs `payload.json`'s JSON body
+    `ticker_payload_url()`, the raw JSON endpoint — NOT the rendered page.
+    This repo's parser needs `payload.json`'s JSON body
     directly, and there is no in-browser `page.evaluate()` step here for
     2Captcha's own headless browser to run for us (the Scraper API hands
     back a fetched document, it does not let a caller execute arbitrary
@@ -229,15 +229,15 @@ def _fetch_one_via_scraper_api(
     except (TypeError, ValueError, AttributeError):
         return None, "remote_api_error"
     if rating is None:
-        return None, "not_found"
+        return None, missing_record_kind(payload)
     return rating, None
 
 
 def _maybe_solve_captcha(
     *, client: Optional[TwoCaptchaClient], page, ticker: str, policy: str, min_score: float,
+    budget: SolveBudget,
 ) -> None:
-    """Called only from within an already-confirmed "blocked" outcome
-    (CLAUDE.md §4-style parity with every sibling's own captcha hook), so
+    """Called only from within an already-confirmed "blocked" outcome, so
     `count_product_links` is unconditionally 0 — there is no "products
     already present" state to protect the way a listing page has.
     Injects a solved token in place and returns; the CALLER's own retry
@@ -246,7 +246,7 @@ def _maybe_solve_captcha(
     key, a solver error) is expected and logged, not treated as a
     failure — see this module's own docstring on why no captcha widget
     has ever actually been seen on this site."""
-    if client is None or policy == "off":
+    if client is None or policy == "off" or budget.remaining <= 0:
         return
     try:
         html = page.content()
@@ -256,6 +256,7 @@ def _maybe_solve_captcha(
         client=client, page_url=page.url, html=html,
         count_product_links=lambda _h: 0,
         extra_markers=BLOCK_BODY_MARKERS, min_score=min_score,
+        budget=budget,
     )
     action = result.get("action")
     if action == "solved":
@@ -291,18 +292,17 @@ def run(
     solve_captcha_policy: str = "when-blocked",
     min_score: float = 0.3,
     block_retries: int = 0,
-) -> Tuple[List[TickerRating], List[str], List[str], List[str]]:
+) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """Returns (ratings, tickers_completed, failed_tickers,
-    blocked_tickers) — see the original docstring (still accurate) for
+    blocked_tickers, parser_failed_tickers) — see the original docstring (still accurate) for
     the exit-code implications. `executable_path`, if given, is passed
     straight to `chromium.launch()`.
 
-    **Scoping decision, stated plainly**: unlike shein-scraper/g2-scraper
-    (which rotate to a fresh proxy per scroll round), this repo picks ONE
-    proxy for the WHOLE run (via `proxy_pool.next()`, once, respecting
-    `--proxy-shuffle`) and does not rotate mid-run on failure. A ticker
-    loop with one small JSON fetch per ticker doesn't carry the same
-    per-page volume shein/g2's rotation was built for, and tearing down
+    **Scoping decision, stated plainly**: this repo picks ONE proxy for the
+    WHOLE run (via `proxy_pool.next()`, once, respecting `--proxy-shuffle`)
+    and does not rotate mid-run on failure. A ticker loop with one small
+    JSON fetch per ticker doesn't carry the per-page volume that
+    proxy rotation is built for in scrolling scrapers, and tearing down
     and relaunching the browser per ticker to support live rotation would
     be a lot of complexity for a benefit this repo has no evidence yet
     that it needs — `--proxy-file` still lets a caller pick a different
@@ -315,6 +315,7 @@ def run(
     completed: List[str] = []
     failed: List[str] = []
     blocked: List[str] = []
+    parser_failed: List[str] = []
 
     with sync_playwright() as pw:
         proxy = proxy_pool.next() if proxy_pool else None
@@ -336,13 +337,13 @@ def run(
             browser = pw.chromium.launch(**launch_kwargs)
 
         if cdp_connect_failed:
-            # Same convention every sibling repo uses: a broken remote
+            # A broken remote
             # dependency is a remote_api_error for every requested ticker,
-            # not a crash (CLAUDE.md §10) — main()'s own remote_api_error
+            # not a crash — main()'s own remote_api_error
             # derivation (bool(failed - blocked) and not completed) comes
             # out True automatically from this shape, with no separate
             # signal needed.
-            return ratings, completed, list(tickers), blocked
+            return ratings, completed, list(tickers), blocked, parser_failed
 
         try:
             page = browser.new_page(user_agent=user_agent) if user_agent else browser.new_page()
@@ -353,6 +354,8 @@ def run(
             for ticker in tickers:
                 rating = None
                 error_kind = None
+                # One paid-solve allowance per ticker, shared by every retry.
+                budget = SolveBudget()
                 for attempt in range(block_retries + 1):
                     rating, error_kind = fetch_one(page, ticker)
                     if error_kind != "blocked":
@@ -363,10 +366,13 @@ def run(
                     # would be redundant (captcha_solver.py's own module
                     # docstring: "over --cdp-endpoint, none of this
                     # applies").
-                    if client is not None and not cdp_endpoint:
+                    # Only solve when a retry follows: a token bought on the
+                    # last attempt would never be used.
+                    if client is not None and not cdp_endpoint and attempt < block_retries:
                         _maybe_solve_captcha(
                             client=client, page=page, ticker=ticker,
                             policy=solve_captcha_policy, min_score=min_score,
+                            budget=budget,
                         )
                     if attempt < block_retries:
                         log.warning(
@@ -380,6 +386,10 @@ def run(
                 if error_kind == "remote_api_error":
                     failed.append(ticker)
                     continue
+                if error_kind == "parser_failed":
+                    failed.append(ticker)
+                    parser_failed.append(ticker)
+                    continue
                 completed.append(ticker)
                 if rating is not None:
                     ratings.append(rating)
@@ -388,13 +398,13 @@ def run(
         finally:
             browser.close()
 
-    return ratings, completed, failed, blocked
+    return ratings, completed, failed, blocked, parser_failed
 
 
 def _run_via_scraper_api(
     tickers: List[str], *, client: TwoCaptchaClient, timeout: int, cdp_url: Optional[str],
     block_retries: int,
-) -> Tuple[List[TickerRating], List[str], List[str], List[str]]:
+) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """--scraper-api's own top-level loop — no browser at all, so no
     `--headless`/`--executable-path`/context/page concepts apply. One
     Scraper API call per ticker, retried up to `--block-retries` times on
@@ -406,6 +416,7 @@ def _run_via_scraper_api(
     completed: List[str] = []
     failed: List[str] = []
     blocked: List[str] = []
+    parser_failed: List[str] = []
 
     for ticker in tickers:
         rating = error_kind = None
@@ -425,11 +436,15 @@ def _run_via_scraper_api(
         if error_kind == "remote_api_error":
             failed.append(ticker)
             continue
+        if error_kind == "parser_failed":
+            failed.append(ticker)
+            parser_failed.append(ticker)
+            continue
         completed.append(ticker)
         if rating is not None:
             ratings.append(rating)
 
-    return ratings, completed, failed, blocked
+    return ratings, completed, failed, blocked, parser_failed
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -458,7 +473,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "own bundled-browser download.",
     )
     parser.add_argument(
-        "--block-retries", type=int, default=2,
+        "--block-retries", type=non_negative_int, default=2,
         help="On a blocked outcome, retry that ticker on the SAME browser/session (same exit IP, "
              "same device identity) this many extra times before giving up — 'retry before you "
              "rotate', not a proxy/session swap. Default 2, matching the rest of the family.",
@@ -470,7 +485,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--captcha-api", default=None, help="Override the 2Captcha API base URL (testing only)")
     parser.add_argument(
         "--solve-captcha", choices=["off", "when-blocked", "always"], default="when-blocked",
-        help="'always' is accepted for CLI parity with every sibling repo, but behaves the same "
+        help="'always' is accepted for CLI parity with other 2scraper tools, but behaves the same "
              "as 'when-blocked' here — this repo has no 'products already present' state a captcha "
              "solve should be skipped for (a ticker fetch is either blocked or it isn't).",
     )
@@ -482,7 +497,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--scraper-api", action="store_true",
         help="Fetch via 2Captcha's Scraper API (scraper.2captcha.com) instead of launching any local "
-             "or --cdp-endpoint browser. Requires --twocaptcha-key/TWOCAPTCHA_KEY. Unlike sibling "
+             "or --cdp-endpoint browser. Requires --twocaptcha-key/TWOCAPTCHA_KEY. Unlike other 2scraper "
              "repos, this fetches ticker_payload_url() directly (the JSON endpoint), not the "
              "rendered page — see _fetch_one_via_scraper_api()'s docstring for the untested "
              "assumption this rests on (whether payload.json answers a fresh, cookie-less request "
@@ -492,7 +507,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "own exit IP/device) — set together, they log a warning rather than silently doing "
              "nothing.",
     )
-    parser.add_argument("--scraper-api-timeout", type=int, default=60, help="Seconds 2Captcha itself waits for the target page to finish loading (1-120, their limit)")
+    parser.add_argument("--scraper-api-timeout", type=int_between(1, 120), default=60, help="Seconds 2Captcha itself waits for the target page to finish loading (1-120, their limit)")
     parser.add_argument("--scraper-api-url", default=None, help="Override the Scraper API base URL (testing only)")
     parser.add_argument(
         "--scraper-api-cdp", action="store_true",
@@ -564,7 +579,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 country=args.scraper_api_country, profile_id=args.scraper_api_profile_id,
             )
         try:
-            ratings, completed, failed, blocked_tickers = _run_via_scraper_api(
+            ratings, completed, failed, blocked_tickers, parser_failed = _run_via_scraper_api(
                 tickers, client=client, timeout=args.scraper_api_timeout, cdp_url=cdp_url,
                 block_retries=args.block_retries,
             )
@@ -595,7 +610,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     user_agent = user_agent_from(profile)
 
         try:
-            ratings, completed, failed, blocked_tickers = run(
+            ratings, completed, failed, blocked_tickers, parser_failed = run(
                 tickers,
                 headless=not args.headed,
                 executable_path=args.executable_path,
@@ -620,6 +635,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         tickers_completed=completed,
         failed_tickers=failed,
         blocked=bool(blocked_tickers),
+        parser_failed_tickers=parser_failed,
         # Preserve remote > blocked precedence if different tickers in a
         # total failure hit different failure kinds. finish_run also derives
         # the plain all-remote case as a defensive backstop.
