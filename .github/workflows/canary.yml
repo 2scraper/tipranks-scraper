@@ -2,10 +2,7 @@ name: canary
 
 on:
   schedule:
-    - cron: "23 7 * * *"   # daily (canary-datacentre); avoid :00 so it doesn't pile up with everyone else's
-    # Mondays only: the paid job (canary-live) runs on this
-    # schedule (each run bills); the free jobs keep the daily one above.
-    - cron: "23 7 * * 1"
+    - cron: "23 7 * * 1"   # weekly, Mondays; avoid :00 so it doesn't pile up with everyone else's
   workflow_dispatch: {}     # dispatch manually at least once before trusting the badge
 
 permissions:
@@ -21,10 +18,7 @@ jobs:
   # Without either, it FAILS with an error naming them: a canary that
   # never reached the site is not a passing canary. Blocked (3), no rows
   # obtained (5), partial (6), empty (4) or zero ratings are all red.
-  # Every run bills the proxy or Scraping Browser, so it runs weekly.
   canary-live:
-    # Paid path: weekly schedule or a manual dispatch only.
-    if: github.event_name != 'schedule' || github.event.schedule == '23 7 * * 1'
     runs-on: ubuntu-latest
     env:
       TIPRANKS_PROXY: ${{ secrets.TIPRANKS_PROXY }}

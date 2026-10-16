@@ -44,7 +44,7 @@ observed a real one: an HTTP 403 Cloudflare JS challenge ("Just a
 moment...") on the page navigation, in a local headless Playwright run,
 after an earlier run had already completed successfully — behavior-
 triggered, not a first-request block. The scraper reports that state as
-exit 3 and the daily live canary treats it as unavailable rather than
+exit 3 and the weekly live canary treats it as unavailable rather than
 leaving a misleading green badge. No confirmed CAPTCHA widget has ever
 been found on this site — `--proxy`/`--cdp-endpoint` are this project's
 own evidence-backed mitigations for the block actually observed, not a
