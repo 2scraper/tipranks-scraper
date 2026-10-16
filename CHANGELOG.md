@@ -6,6 +6,12 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the canary's paid `canary-live` job now runs weekly (Mondays 07:23
+  UTC) and on a manual dispatch; the free `canary-datacentre` job still runs
+  daily.
+
 ## [0.3.0] - 2026-10-15
 
 > **Behaviour changes.**
