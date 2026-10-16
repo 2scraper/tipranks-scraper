@@ -233,7 +233,8 @@ triggered challenge, not a first-request block. The scraper reports that
 as exit 3. GitHub Actions' own datacentre IPs are refused the same way:
 every scheduled canary run from 2026-10-01 to 2026-10-15 ended blocked
 with 0 rows. The canary's `canary-live` job therefore runs through the
-`TIPRANKS_PROXY` or `TIPRANKS_CDP_ENDPOINT` repository secret, and is red
+`TIPRANKS_PROXY` or `TIPRANKS_CDP_ENDPOINT` repository secret, weekly
+(Mondays) and on a manual dispatch because each run bills, and is red
 unless it collects real, fully parsed rows; without either secret it
 fails with an error naming them. A separate `canary-datacentre` job keeps
 trying the runner's own IP and reports the expected refusal as a notice.
