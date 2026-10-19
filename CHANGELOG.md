@@ -6,6 +6,21 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-19
+
+Found in a full live test pass of all three engines against tipranks.com.
+
+### Fixed
+
+- `current_price` was weeks or months stale. It came from the payload's `quotes` block, which was last updated 2026-08-31 for AAPL and 2026-07-27 for NVDA (GME read 19.16 against a real 26.81), and was absent for MSFT, GME, LUV and BRK.B. It is now the most recent of `quotes`, `prices.daily` and the last entry of `stocks_extra[].prices.daily`, which is the price the site computes `price_target_upside` from: it matched for all of AAPL, NVDA, GME, LUV and BRK.B. `current_price_source` can now also be `daily` or `daily_history`.
+- `--scraper-api-cdp` could never connect. It built the Scraping Browser login and password from the API key, which 2Captcha refuses ("401 Unauthorized Wrong user name format"); the Scraping Browser has its own credentials. It now takes them from `--cdp-endpoint` / `TIPRANKS_CDP_ENDPOINT` and exits 2 without one. Verified live.
+- `--fingerprint` never applied a user agent: the live Fingerprint API returns it at `userAgent.userAgent`, not `userAgent.value`. Verified live; a profile without one now logs a warning.
+- Every `--cdp-endpoint` run warned "Ignoring --fingerprint" although `--fingerprint` was not passed.
+- pyppeteer could not use a proxy with a login and password: `page.authenticate()` relies on `Network.setRequestInterception`, which current Chrome no longer has. Proxy credentials are now answered through the CDP `Fetch` domain, only for the proxy's own challenge. Verified live.
+- A Cloudflare challenge shown in another language (a ru-RU Chrome gets "Один момент…") was not recognised: Selenium reported exit 5 instead of 3 (blocked). The challenge's own `_cf_chl_opt` config is now a block marker too.
+- A `socks5://` proxy with a login and password crashed Playwright; it is now a usage error (exit 2). A malformed proxy line is no longer echoed in the error, since it can carry a password.
+- `smoke_test.py` no longer reads the developer's own `.env`: with a credentialed `TIPRANKS_CDP_ENDPOINT` there, five checks failed.
+
 ### Changed
 
 - CI only: the whole canary, free and paid jobs alike, now runs weekly (Mondays 07:23 UTC) and on a manual dispatch; the daily schedule is removed.
@@ -304,7 +319,8 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.1.0...v0.2.0

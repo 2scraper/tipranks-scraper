@@ -113,10 +113,47 @@ async def _launch(
 
 
 async def _authenticate_if_needed(page, proxy: Optional[Proxy]) -> None:
-    if proxy is not None:
-        auth = proxy.pyppeteer_auth_dict()
-        if auth:
-            await page.authenticate(auth)
+    # Not `page.authenticate()`: pyppeteer implements it with
+    # Network.setRequestInterception, which current Chrome no longer has
+    # ("'Network.setRequestInterception' wasn't found", seen live
+    # 2026-10-19). The Fetch domain is what Puppeteer itself moved to.
+    if proxy is None:
+        return
+    auth = proxy.pyppeteer_auth_dict()
+    if not auth:
+        return
+    client = page._client
+
+    async def _continue(event: dict) -> None:
+        try:
+            await client.send("Fetch.continueRequest", {"requestId": event["requestId"]})
+        except Exception:  # noqa: BLE001 — the request may be gone by now
+            pass
+
+    async def _answer(event: dict) -> None:
+        # Credentials go to the proxy only, never to a site's own challenge.
+        if event.get("authChallenge", {}).get("source") == "Proxy":
+            response = {"response": "ProvideCredentials", **auth}
+        else:
+            response = {"response": "Default"}
+        try:
+            await client.send("Fetch.continueWithAuth", {"requestId": event["requestId"], "authChallengeResponse": response})
+        except Exception:  # noqa: BLE001
+            pass
+
+    client.on("Fetch.requestPaused", lambda e: asyncio.ensure_future(_continue(e)))
+    client.on("Fetch.authRequired", lambda e: asyncio.ensure_future(_answer(e)))
+    await client.send("Fetch.enable", {"handleAuthRequests": True, "patterns": [{"urlPattern": "*"}]})
+
+
+async def _stop_proxy_auth(page) -> None:
+    """Turn request interception off before the browser closes: a paused
+    request answered while the target is going away leaves pyppeteer's own
+    inner future with an unretrieved "Target closed" error on stderr."""
+    try:
+        await page._client.send("Fetch.disable")
+    except Exception:  # noqa: BLE001 — closing anyway
+        pass
 
 
 async def _enable_scraping_browser_auto_solve(page) -> None:
@@ -304,6 +341,7 @@ async def run_async(
         log.error("CDP connection failed — treating as remote_api_error, not a crash: %s", exc)
         return ratings, completed, list(tickers), blocked, parser_failed
 
+    page = None
     try:
         page = await browser.newPage()
         if user_agent:
@@ -354,6 +392,8 @@ async def run_async(
             if rating is not None:
                 ratings.append(rating)
     finally:
+        if page is not None and proxy is not None and proxy.pyppeteer_auth_dict():
+            await _stop_proxy_auth(page)
         await browser.close()
 
     return ratings, completed, failed, blocked, parser_failed
@@ -524,7 +564,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not args.twocaptcha_key:
             print("error: --scraper-api requires --twocaptcha-key/TWOCAPTCHA_KEY", file=sys.stderr)
             return EXIT_BAD_USAGE
-        if args.headed or args.executable_path or args.proxy or args.proxy_file or args.cdp_endpoint or args.fingerprint:
+        if (args.headed or args.executable_path or args.proxy or args.proxy_file or args.fingerprint
+                or (args.cdp_endpoint and not args.scraper_api_cdp)):
             log.warning(
                 "--scraper-api ignores --headed/--executable-path/--proxy/--proxy-file/"
                 "--cdp-endpoint/--fingerprint — this mode brings its own exit IP/device via "
@@ -538,9 +579,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         client = TwoCaptchaClient(args.twocaptcha_key, api_base=args.captcha_api, scraper_api_base=args.scraper_api_url)
         cdp_url = None
         if args.scraper_api_cdp:
-            cdp_url = client.scraping_browser_connection_url(
-                country=args.scraper_api_country, profile_id=args.scraper_api_profile_id,
-            )
+            if not args.cdp_endpoint:
+                print(
+                    "error: --scraper-api-cdp needs your Scraping Browser endpoint (--cdp-endpoint or "
+                    "TIPRANKS_CDP_ENDPOINT): its login and password are separate from the API key",
+                    file=sys.stderr,
+                )
+                return EXIT_BAD_USAGE
+            try:
+                cdp_url = client.scraping_browser_connection_url(
+                    args.cdp_endpoint, country=args.scraper_api_country, profile_id=args.scraper_api_profile_id,
+                )
+            except ValueError as exc:
+                print(f"error: --cdp-endpoint: {exc}", file=sys.stderr)
+                return EXIT_BAD_USAGE
         try:
             ratings, completed, failed, blocked_tickers, parser_failed = _run_via_scraper_api(
                 tickers, client=client, timeout=args.scraper_api_timeout, cdp_url=cdp_url,
@@ -580,7 +632,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             captcha_client = TwoCaptchaClient(args.twocaptcha_key, api_base=args.captcha_api)
 
         user_agent = None
-        cdp_refused_fingerprint = refuse_if_cdp(args.cdp_endpoint)
+        cdp_refused_fingerprint = args.fingerprint and refuse_if_cdp(args.cdp_endpoint)
         if args.fingerprint and not cdp_refused_fingerprint:
             if captcha_client is None:
                 log.warning("--fingerprint requested but no --twocaptcha-key/TWOCAPTCHA_KEY set — continuing without one.")

@@ -40,9 +40,12 @@ Per ticker:
 - The same set again for TipRanks' "Best Performing Analysts" subset,
   prefixed `best_*` — a different, smaller population than the fields
   above, never merged with them.
-- `current_price` and `current_price_asof` — best-effort. The payload's
-  quote can lag the page's own rendered price; treat this as a
-  possibly-stale snapshot, not a real-time quote.
+- `current_price` and `current_price_asof` — the most recent price the
+  payload carries: usually the last trading day's close (`current_price_source`
+  `daily` or `daily_history`), the same price the site computes
+  `price_target_upside` from. The payload's own `quotes` block is used only
+  when it is newer; on 2026-10-19 it was weeks or months old where present.
+  Not a real-time quote.
 - `company_name`, `currency`, `source_url`, `scraped_at`.
 
 Any of the consensus/count/price-target fields can be `None` — some
@@ -137,16 +140,13 @@ a genuinely untested assumption** — see
 silently dropped) — a single static fetch per ticker has no browser
 session and brings its own exit IP/device.
 
-**`--scraper-api-cdp`** routes `--scraper-api`'s fetch through a 2Captcha
-Scraping Browser CDP session (their `cdpurl` field) instead of their own
-default pool, chaining two 2Captcha products together — this is what
-would give `--scraper-api` real captcha auto-solve and exit-country
-pinning, the same way `scraping_browser_connection_url()` already works
-for `--cdp-endpoint`. It never touches a caller-supplied
-`--cdp-endpoint` — that flag stays ignored in `--scraper-api` mode.
-**Wired and covered by `smoke_test.py` (structural + behavioral, with a
-faked Scraper API response), but not yet exercised against a real
-2Captcha/tipranks.com session** — see `CHANGELOG.md` and `TESTING.md`.
+**`--scraper-api-cdp`** routes `--scraper-api`'s fetch through your own
+2Captcha Scraping Browser session (their `cdpurl` field) instead of their
+default pool. It needs that session's endpoint in `--cdp-endpoint` /
+`TIPRANKS_CDP_ENDPOINT`: the Scraping Browser has its own login and
+password, separate from the API key. `--scraper-api-country` and
+`--scraper-api-profile-id` replace the endpoint's `-country-`/`-pid-`
+parts. Verified live on 2026-10-19 (AAPL and MSFT, complete).
 
 **Scoping decision, stated plainly**: this repo picks ONE proxy for the
 whole run and does not rotate mid-run — a per-ticker JSON fetch loop
@@ -281,11 +281,13 @@ list and the live-testing checklist.
   solving plumbing is shipped for family parity and may simply find
   nothing to solve; see "2Captcha toolkit" above.
 - `--scraper-api` fetches `payload.json` directly instead of the
-  rendered page; whether that endpoint
-  answers a fresh, cookie-less request the way it answers the in-page
-  fetch is untested — see "2Captcha toolkit" above.
-- `--scraper-api-cdp` is wired and unit-tested but not yet exercised
-  against a real 2Captcha/tipranks.com session.
+  rendered page. Verified live on 2026-10-19: a fresh, cookie-less
+  request gets the same payload as the in-page fetch.
+- From a home or VPN IP, a plain local headless run usually meets a
+  Cloudflare challenge on the ticker page (exit 3), even through a
+  residential proxy. On 2026-10-19 the same local Playwright run passed
+  3 of 3 times with `--fingerprint` and was blocked 2 of 2 times without
+  it. `--cdp-endpoint` and `--scraper-api` passed every time.
 - Only the ticker forecast page. No screener/stock-list pages, no
   insider-trading pages, no hedge fund activity pages — all real
   sections of the same site, out of scope here.
