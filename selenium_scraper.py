@@ -7,31 +7,14 @@ Cloudflare block, not a confirmed CAPTCHA widget — see that file and
 `captcha_solver.py`'s module docstrings for the honesty caveat this
 engine inherits unchanged).
 
-**Named per-engine limitation** (predates the 2026-09-28 toolkit add):
-chromedriver's `driver.get()` does not expose the navigated response's
-HTTP status code the way Playwright's `page.goto()` / pyppeteer's
-`page.goto()` do. Rather than reach for `execute_cdp_cmd`'s lower-level
-Network domain (real complexity for a single status code), this engine
-detects a not-found page the same way a human would: the confirmed real
-page title for an unknown ticker is literally `"Error 404: Page Not
-Found - TipRanks.com"` (see `tipranks_parser.py`'s module docstring), so
-`fetch_one()` below checks `driver.title` for that string. This is a
-real, confirmed string, not a guess — but it is a different detection
-mechanism from the other two engines, and is called out here rather than
-left for a user to discover.
-
-The same status-code blindness applies to the "blocked" (403/429) signal
-`playwright_scraper.py` / `puppeteer_scraper.py` check at `page.goto()`
-time: this engine can only see a 403/429 on the *in-page* `fetch()` call
-against `payload.json`, not on the initial page navigation itself. Since
-2026-09-28 this gap is narrowed (not closed) by also checking
-`driver.current_url` / `driver.page_source` against
-`tipranks_parser.BLOCK_URL_MARKERS` / `BLOCK_BODY_MARKERS` right after
-navigation — the same real Cloudflare markers the other two engines check
-via their own status+body reads — so the one real block this project has
-actually observed is caught here too, even though a *hypothetical*
-differently-shaped block that returns neither a checked marker nor a
-403/429 on the in-page fetch still would not be, same as before.
+**Named per-engine limitation**: chromedriver's `driver.get()` does not
+expose the response's HTTP status code the way Playwright's and
+pyppeteer's `page.goto()` do. Since 0.4.0 every engine navigates straight
+to `payload.json`, so this engine reads the site's own JSON answer
+instead: `{"msg": "ticker not found"}` (served with a 400) is "not found",
+and a block is read from `tipranks_parser.BLOCK_URL_MARKERS` /
+`BLOCK_BODY_MARKERS` in the URL and page source. A block that shows
+neither marker would be reported as a remote error, not as blocked.
 
 **Selenium's two standing limits on this repo**:
 
@@ -98,23 +81,9 @@ ENGINE_NAME = "selenium"
 
 # --- site-specific engine constants ---
 NAV_TIMEOUT_S = 30
-READINESS_WAIT_S = 2  # the SPA's own payload fetch happens right after load
 
-NOT_FOUND_TITLE_MARKER = "Error 404: Page Not Found"
 _BLOCKED_STATUSES = (403, 429)
 _NOT_FOUND_STATUSES = (404, 400)
-
-_FETCH_ASYNC_SCRIPT = """
-var url = arguments[0];
-var callback = arguments[arguments.length - 1];
-fetch(url, {credentials: 'include'})
-    .then(function (res) {
-        if (!res.ok) { callback({__status: res.status}); return; }
-        return res.json().then(callback);
-    })
-    .catch(function (e) { callback({__error: String(e)}); });
-"""
-
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -127,52 +96,43 @@ def _cdp_endpoint_has_credentials(cdp_endpoint: str) -> bool:
 
 def fetch_one(driver, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]:
     """Same contract as playwright_scraper.fetch_one: (rating_or_None,
-    error_kind), never raises. See this module's own docstring for why
-    the block-detection order here (title, then URL/body markers, then
-    the in-page fetch's own __status) differs from the other two engines."""
-    page_url = ticker_page_url(ticker)
+    error_kind), never raises. Navigates straight to `payload.json`, never the ticker page: live on
+    2026-10-19 Cloudflare answered the ticker page with a 403 challenge from
+    a home IP, a VPN and a residential proxy alike, while `payload.json`
+    answered 200 from all three to a plain headless browser.
+    chromedriver exposes no HTTP status, so a block is read from the
+    URL/body markers, and a not-found from the site's own JSON answer
+    (`{"msg": "ticker not found"}`, served with a 400)."""
     payload_url = ticker_payload_url(ticker)
 
     try:
         driver.set_page_load_timeout(NAV_TIMEOUT_S)
-        driver.get(page_url)
+        driver.get(payload_url)
+        current_url = driver.current_url or ""
+        html = driver.page_source or ""
+        # Chrome shows a JSON document inside a <pre>; newer builds add a
+        # "pretty-print" control to <body> as well.
+        body = driver.execute_script(
+            "var pre = document.querySelector('pre');"
+            "return pre ? pre.innerText : (document.body ? document.body.innerText : '');"
+        ) or ""
     except Exception:
         return None, "remote_api_error"
 
-    if NOT_FOUND_TITLE_MARKER in (driver.title or ""):
-        return None, "not_found"
-
-    try:
-        current_url = driver.current_url
-    except Exception:
-        current_url = page_url
-    if any(m in (current_url or "").lower() for m in BLOCK_URL_MARKERS):
+    if any(m in current_url.lower() for m in BLOCK_URL_MARKERS) or any(m in html.lower() for m in BLOCK_BODY_MARKERS):
         return None, "blocked"
 
     try:
-        html = driver.page_source
-    except Exception:
-        html = ""
-    if any(m in html.lower() for m in BLOCK_BODY_MARKERS):
-        return None, "blocked"
-
-    time.sleep(READINESS_WAIT_S)
-
-    try:
-        driver.set_script_timeout(NAV_TIMEOUT_S)
-        payload = driver.execute_async_script(_FETCH_ASYNC_SCRIPT, payload_url)
-    except Exception:
+        payload = json.loads(body) if body else None
+    except ValueError:
         return None, "remote_api_error"
-
-    if isinstance(payload, dict) and payload.get("__status") in _BLOCKED_STATUSES:
-        return None, "blocked"
-    if isinstance(payload, dict) and payload.get("__status") in _NOT_FOUND_STATUSES:
+    if isinstance(payload, dict) and "models" not in payload and "not found" in str(payload.get("msg", "")).lower():
         return None, "not_found"
     if not isinstance(payload, dict) or "models" not in payload:
         return None, "remote_api_error"
 
     try:
-        rating = parse_payload(payload, ticker, source_url=page_url, scraped_at=_now_iso())
+        rating = parse_payload(payload, ticker, source_url=ticker_page_url(ticker), scraped_at=_now_iso())
     except (TypeError, ValueError, AttributeError):
         return None, "remote_api_error"
     if rating is None:
@@ -186,10 +146,7 @@ def _fetch_one_via_scraper_api(
     """Identical logic to playwright_scraper.py's own copy — duplicated
     per engine per this family's own convention, since
     this mode uses no browser/driver at all and has nothing engine-
-    specific to say. See that function's docstring for the untested
-    assumption this rests on (whether `payload.json` answers a fresh,
-    cookie-less request the same way it answers the in-page authenticated
-    fetch `fetch_one()` above uses)."""
+    specific to say."""
     try:
         result = client.scrape_url(ticker_payload_url(ticker), timeout=timeout, cdp_url=cdp_url)
     except TwoCaptchaAuthError as exc:
@@ -473,8 +430,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Fetch via 2Captcha's Scraper API (scraper.2captcha.com) instead of launching any local "
              "or --cdp-endpoint browser. Requires --twocaptcha-key/TWOCAPTCHA_KEY. Unlike other 2scraper "
              "repos, this fetches ticker_payload_url() directly (the JSON endpoint), not the "
-             "rendered page — see playwright_scraper.py's _fetch_one_via_scraper_api() docstring for "
-             "the untested assumption this rests on. --headed/--executable-path/--proxy/"
+             "rendered page, like the browser engines. --headed/--executable-path/--proxy/"
              "--cdp-endpoint/--fingerprint are all IGNORED in this mode (a single static fetch per "
              "ticker has no browser session, and brings its own exit IP/device) — set together, "
              "they log a warning rather than silently doing nothing.",

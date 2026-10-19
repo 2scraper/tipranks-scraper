@@ -71,21 +71,9 @@ ENGINE_NAME = "puppeteer"
 
 # --- site-specific engine constants ---
 NAV_TIMEOUT_MS = 30_000
-READINESS_WAIT_MS = 2_000  # the SPA's own payload fetch happens right after load
 
 _BLOCKED_STATUSES = (403, 429)
 _NOT_FOUND_STATUSES = (404, 400)
-
-_FETCH_SCRIPT = """async (url) => {
-    try {
-        const res = await fetch(url, {credentials: 'include'});
-        if (!res.ok) { return {__status: res.status}; }
-        return await res.json();
-    } catch (e) {
-        return {__error: String(e)};
-    }
-}"""
-
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -182,44 +170,33 @@ def _looks_blocked(status: Optional[int], url: str, html: str) -> bool:
 
 async def fetch_one_async(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]:
     """Same contract as playwright_scraper.fetch_one: (rating_or_None,
-    error_kind), never raises."""
-    page_url = ticker_page_url(ticker)
+    error_kind), never raises. Navigates straight to `payload.json`, never the ticker page: live on
+    2026-10-19 Cloudflare answered the ticker page with a 403 challenge from
+    a home IP, a VPN and a residential proxy alike, while `payload.json`
+    answered 200 from all three to a plain headless browser."""
     payload_url = ticker_payload_url(ticker)
 
     try:
-        response = await page.goto(page_url, {"waitUntil": "domcontentloaded", "timeout": NAV_TIMEOUT_MS})
+        response = await page.goto(payload_url, {"waitUntil": "domcontentloaded", "timeout": NAV_TIMEOUT_MS})
+        body = await response.text() if response is not None else ""
     except Exception:
         return None, "remote_api_error"
 
     status = response.status if response is not None else None
+    if _looks_blocked(status, page.url, body):
+        return None, "blocked"
     if status in _NOT_FOUND_STATUSES:
         return None, "not_found"
-    if status in _BLOCKED_STATUSES or any(m in (page.url or "").lower() for m in BLOCK_URL_MARKERS):
-        return None, "blocked"
-    if status != 200:
-        try:
-            html = await page.content()
-        except Exception:
-            html = ""
-        if any(m in html.lower() for m in BLOCK_BODY_MARKERS):
-            return None, "blocked"
-
-    await asyncio.sleep(READINESS_WAIT_MS / 1000)
 
     try:
-        payload = await page.evaluate(_FETCH_SCRIPT, payload_url)
-    except Exception:
+        payload = json.loads(body) if body else None
+    except ValueError:
         return None, "remote_api_error"
-
-    if isinstance(payload, dict) and payload.get("__status") in _BLOCKED_STATUSES:
-        return None, "blocked"
-    if isinstance(payload, dict) and payload.get("__status") in _NOT_FOUND_STATUSES:
-        return None, "not_found"
     if not isinstance(payload, dict) or "models" not in payload:
         return None, "remote_api_error"
 
     try:
-        rating = parse_payload(payload, ticker, source_url=page_url, scraped_at=_now_iso())
+        rating = parse_payload(payload, ticker, source_url=ticker_page_url(ticker), scraped_at=_now_iso())
     except (TypeError, ValueError, AttributeError):
         return None, "remote_api_error"
     if rating is None:
@@ -233,10 +210,7 @@ def _fetch_one_via_scraper_api(
     """Identical logic to playwright_scraper.py's own copy — duplicated
     per engine per this family's own convention. A plain
     `requests` call (via TwoCaptchaClient.scrape_url), not pyppeteer —
-    nothing here needs `await`. See that function's docstring for the
-    untested assumption this rests on (whether `payload.json` answers a
-    fresh, cookie-less request the same way it answers the in-page
-    authenticated fetch `fetch_one_async()` above uses)."""
+    nothing here needs `await`."""
     try:
         result = client.scrape_url(ticker_payload_url(ticker), timeout=timeout, cdp_url=cdp_url)
     except TwoCaptchaAuthError as exc:
@@ -504,8 +478,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Fetch via 2Captcha's Scraper API (scraper.2captcha.com) instead of launching any local "
              "or --cdp-endpoint browser. Requires --twocaptcha-key/TWOCAPTCHA_KEY. Unlike other 2scraper "
              "repos, this fetches ticker_payload_url() directly (the JSON endpoint), not the "
-             "rendered page — see playwright_scraper.py's _fetch_one_via_scraper_api() docstring for "
-             "the untested assumption this rests on. --headed/--executable-path/--proxy/"
+             "rendered page, like the browser engines. --headed/--executable-path/--proxy/"
              "--cdp-endpoint/--fingerprint are all IGNORED in this mode (a single static fetch per "
              "ticker has no browser session, and brings its own exit IP/device) — set together, "
              "they log a warning rather than silently doing nothing.",
@@ -656,6 +629,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         except Exception as exc:
             print(f"crash: {exc}", file=sys.stderr)
+            if "Browser closed unexpectedly" in str(exc) and not args.executable_path and not args.cdp_endpoint:
+                # pyppeteer's own pinned Chromium segfaults on Apple Silicon (module docstring).
+                print(
+                    "hint: pyppeteer's bundled Chromium could not start; point --executable-path at an "
+                    "installed Chrome, e.g. \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\"",
+                    file=sys.stderr,
+                )
             return EXIT_CRASH
 
     return finish_run(

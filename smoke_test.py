@@ -1235,20 +1235,20 @@ def _():
     class Response:
         status = 200
 
+        def __init__(self, payload):
+            self.payload = payload
+
+        def text(self):
+            return json.dumps(self.payload)
+
     class Page:
-        url = "https://www.tipranks.com/stocks/aapl/stock-analysis"
+        url = "https://www.tipranks.com/stocks/aapl/stock-analysis/payload.json"
 
         def __init__(self, payload):
             self.payload = payload
 
         def goto(self, *args, **kwargs):
-            return Response()
-
-        def wait_for_timeout(self, ms):
-            pass
-
-        def evaluate(self, script, *args):
-            return self.payload
+            return Response(self.payload)
 
     assert playwright_scraper.fetch_one(Page(_payload_with_renamed_ids()), "AAPL") == (None, "parser_failed")
     assert playwright_scraper.fetch_one(Page({"models": {"stocks": []}}), "AAPL") == (None, "not_found")
@@ -1462,6 +1462,83 @@ def _():
     assert "await page.authenticate(" not in src
     assert '"Fetch.enable", {"handleAuthRequests": True' in src
     assert '== "Proxy"' in src, "credentials must only answer the proxy's own challenge"
+
+
+@check("every engine navigates straight to payload.json (the ticker page is Cloudflare-challenged, the payload is not — live 2026-10-19) and classifies 200/400/403 the same way")
+def _():
+    import asyncio
+    from tipranks_parser import ticker_payload_url
+
+    good = _load_fixture("tipranks_aapl_stock_analysis.json")
+    challenge = "<html><head><title>Один момент…</title></head><body><script>window._cf_chl_opt={cvId:'3'};</script></body></html>"
+    cases = [  # (status, body, expected error_kind)
+        (200, json.dumps(good), None),
+        (400, '{"msg":"ticker not found"}', "not_found"),
+        (403, challenge, "blocked"),
+        (200, "not json", "remote_api_error"),
+    ]
+
+    class Resp:
+        def __init__(self, status, body):
+            self.status, self.body = status, body
+
+        def text(self):
+            return self.body
+
+    class SyncPage:
+        url = "https://www.tipranks.com/x"
+
+        def __init__(self, status, body):
+            self.resp, self.visited = Resp(status, body), []
+
+        def goto(self, url, **kwargs):
+            self.visited.append(url)
+            return self.resp
+
+    class AsyncResp(Resp):
+        async def text(self):
+            return self.body
+
+    class AsyncPage(SyncPage):
+        def __init__(self, status, body):
+            self.resp, self.visited = AsyncResp(status, body), []
+
+        async def goto(self, url, *args, **kwargs):
+            self.visited.append(url)
+            return self.resp
+
+    class Driver:
+        current_url = "https://www.tipranks.com/x"
+
+        def __init__(self, status, body):
+            self.body, self.visited = body, []
+            self.page_source = body if body.startswith("<") else f"<html><body><pre>{body}</pre></body></html>"
+
+        def set_page_load_timeout(self, s):
+            pass
+
+        def get(self, url):
+            self.visited.append(url)
+
+        def execute_script(self, script):
+            return self.body
+
+    for status, body, expected in cases:
+        page = SyncPage(status, body)
+        rating, kind = playwright_scraper.fetch_one(page, "AAPL")
+        assert kind == expected and (rating is not None) == (expected is None), ("playwright", status, kind)
+        assert page.visited == [ticker_payload_url("AAPL")], page.visited
+
+        apage = AsyncPage(status, body)
+        rating, kind = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+            puppeteer_scraper.fetch_one_async(apage, "AAPL"))
+        assert kind == expected and (rating is not None) == (expected is None), ("puppeteer", status, kind)
+        assert apage.visited == [ticker_payload_url("AAPL")], apage.visited
+
+        driver = Driver(status, body)
+        rating, kind = selenium_scraper.fetch_one(driver, "AAPL")
+        assert kind == expected and (rating is not None) == (expected is None), ("selenium", status, kind)
+        assert driver.visited == [ticker_payload_url("AAPL")], driver.visited
 
 
 def main() -> int:

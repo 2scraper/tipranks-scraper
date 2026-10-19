@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19
+
+> **Behaviour change.** Every browser engine now navigates straight to
+> `/stocks/{ticker}/stock-analysis/payload.json` instead of opening the
+> ticker page and fetching the payload from inside it. Rows, columns and
+> exit codes are unchanged; `source_url` still names the ticker page.
+
+### Fixed
+
+- Local runs were blocked (exit 3). Cloudflare answers the ticker page with a 403 challenge ("Just a moment…"), which this repo cannot solve: it is Cloudflare's own challenge page, not a Turnstile widget. Live on 2026-10-19 that happened from a home IP, a VPN and a residential proxy, with or without `--fingerprint` (which at best got the first ticker of a run). `payload.json` answered 200 from all three, so a plain local headless run now collects every ticker: 8 of 8 on Playwright, pyppeteer and Selenium from the same IP that was blocked before, and 30 of 30 in 11 s with Playwright. Also verified through an authenticated proxy, over `--cdp-endpoint`, with `--fingerprint`, Selenium `--headed` in a ru-RU locale, and the Docker image.
+- Selenium reads "not found" from the site's own answer (`{"msg": "ticker not found"}`, a 400) instead of the ticker page's title.
+- pyppeteer's crash when its bundled Chromium cannot start (Apple Silicon) now prints a hint to use `--executable-path`.
+
+### Changed
+
+- README no longer says `--fingerprint` gets local runs past Cloudflare: the 0.3.1 claim (3 of 3) did not hold up, later runs from the same IP were 0 of 3.
+
 ## [0.3.1] - 2026-10-19
 
 Found in a full live test pass of all three engines against tipranks.com.
@@ -319,7 +336,8 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.0...v0.2.1

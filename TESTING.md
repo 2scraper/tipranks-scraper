@@ -89,8 +89,8 @@ There is no `local_e2e_test.py` in this repo (a scraper with a
 proxy pool and multi-page pagination needs one, to reproduce a
 control-flow bug class that genuinely doesn't exist here — a single
 ticker fetch has no rotation/pagination state to get wrong). The engine
-scripts' actual browser-automation code (`page.goto` + the in-page
-`fetch()` of `payload.json`, per engine) is only proven by a real live
+scripts' actual browser-automation code (`page.goto`/`driver.get` of
+`payload.json`, per engine) is only proven by a real live
 run, below — `smoke_test.py` never launches a browser at all.
 
 The `EXIT_BLOCKED` path has now fired in a real, local (non-CI) headless
@@ -109,7 +109,7 @@ cannot be provoked on demand and belongs to the scheduled canary.
 2. `python3 playwright_scraper.py --ticker AAPL --format json --out out.json` — inspect `out.json` and `out.json.meta.json` by hand. This is the single most important run: everything else here is a variation on it.
 3. Repeat with `--ticker ZZZZINVALID` (or any ticker you know doesn't exist) — confirm it's recorded as a completed ticker contributing zero rows, not a failure.
 4. Repeat with several real tickers at once, including one with a `.` in the symbol (e.g. `BRK.B`, confirmed live — see `tipranks_parser.py`).
-5. Selenium: `pip install -r requirements-selenium.txt`, run the same commands against `selenium_scraper.py`. Confirm `driver.title`-based not-found detection actually fires on a real invalid ticker (see that file's module docstring for why it differs from the other two engines).
+5. Selenium: `pip install -r requirements-selenium.txt`, run the same commands against `selenium_scraper.py`. Confirm an invalid ticker is reported as not found from the site's own `{"msg": "ticker not found"}` answer (see that file's module docstring for why it differs from the other two engines).
 6. Puppeteer: `pip install -r requirements-puppeteer.txt`, same commands against `puppeteer_scraper.py`.
 7. `python3 diff_runs.py out1.json out2.json` against two real runs a few minutes apart — confirm `price target changed`/`smart score changed` behave sensibly (small moves are normal; see `tipranks_parser.py`'s note on the payload's own edge-cache TTL for why a very recent price can lag).
 8. Grep the actual stdout/output files for anything unexpected — a credential should never leak into a log line or a `.meta.json` sidecar under a real failure, not just a simulated one — this matters more now than it did before 2026-09-28, since this repo has a real credential model today.
@@ -180,15 +180,9 @@ this site specifically, none of which has been exercised live yet.
         --scraper-api-country us --out /tmp/tipranks_scraper_api_cdp.json
     ```
 
-    Worth specifically testing here, neither yet exercised against a real
-    2Captcha/tipranks.com session: whether `payload.json` genuinely
-    answers a fresh, cookie-less request the same way it answers the
-    in-page authenticated fetch this repo's browser engines use (see
-    `_fetch_one_via_scraper_api()`'s own docstring — this is the load-
-    bearing untested assumption `--scraper-api` rests on for this repo
-    specifically, since it does not fetch the rendered page); and whether `--scraper-api-cdp` actually
-    solves a real Cloudflare challenge on 2Captcha's own side of that
-    Scraping Browser session before the response comes back.
+    Both verified live on 2026-10-19 (see "Live pass" below). Still
+    unexercised: whether `--scraper-api-cdp` solves a real Cloudflare
+    challenge on 2Captcha's side, since `payload.json` has not shown one.
     `smoke_test.py` only proves the `cdpurl` gets built correctly and
     reaches `scraper_api_client.scrape_url` — against a fake response,
     not a real 2Captcha task.
@@ -211,11 +205,11 @@ key.
 | Path | Result |
 |---|---|
 | Playwright / pyppeteer over `--cdp-endpoint` | complete (AAPL, MSFT, NVDA, GME, LUV, BRK.B; `ZZZZINVALID` completes with zero rows) |
-| `--scraper-api` | complete; the cookie-less `payload.json` fetch matches the in-page one |
+| `--scraper-api` | complete; the cookie-less `payload.json` fetch matches what the browsers read |
 | `--scraper-api --scraper-api-cdp` | complete after the 0.3.1 fix (built from `TIPRANKS_CDP_ENDPOINT`) |
-| Local headless Playwright, pyppeteer, Selenium, no proxy | exit 3, Cloudflare challenge on the ticker page |
-| Local Playwright + `--fingerprint` | complete, 4 of 4 runs |
-| Playwright / pyppeteer through an authenticated HTTP proxy | proxy auth works (browser exit IP = proxy), then exit 3 on the challenge |
+| Local headless Playwright, pyppeteer, Selenium, no proxy (0.3.x: ticker page first) | exit 3, Cloudflare challenge on the ticker page; `--fingerprint` got only the first ticker, and not reliably |
+| Same, 0.4.0 (straight to `payload.json`), from the same "burnt" VPN IP | complete on all three engines (8 tickers incl. `BRK.B` and an invalid one); 30 of 30 tickers in 11 s with Playwright |
+| 0.4.0 through an authenticated HTTP proxy, with `--fingerprint`, Selenium `--headed` with a ru-RU locale, and the Docker image | complete |
 | Selenium + authenticated proxy | credentials stripped by design (README), exit 5 |
 | pyppeteer's own Chromium on Apple Silicon | crashes as documented; `--executable-path` to Google Chrome works |
 | `diff_runs.py`, Docker image (no `tests/`, no `.env`; `--scraper-api` run inside it complete) | as documented |

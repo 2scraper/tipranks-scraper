@@ -4,12 +4,13 @@ tipranks-scraper. Scrapes one thing: a stock ticker's forecast-page
 snapshot (Smart Score, analyst consensus, price target, Buy/Hold/Sell
 rating) from tipranks.com's free, unauthenticated data.
 
-Flow per ticker, confirmed live during research for this repo: navigate
-to `https://www.tipranks.com/stocks/{ticker}/stock-analysis`, then fetch
-the same-origin `.../stock-analysis/payload.json` from inside the page
-(a same-origin `fetch()`, not a separate cookie-less HTTP client) and
-parse the JSON. No DOM/CSS scraping is used for any field this repo
-cares about.
+Flow per ticker: navigate the browser straight to
+`https://www.tipranks.com/stocks/{ticker}/stock-analysis/payload.json`
+and parse the JSON. Until 0.4.0 every engine first opened the ticker page
+and fetched the payload from inside it; live on 2026-10-19 Cloudflare
+answered that page with a 403 challenge from a home IP, a VPN and a
+residential proxy alike, while the payload answered 200 from all three.
+No DOM/CSS scraping is used for any field this repo cares about.
 
 **Added 2026-09-28**: `--proxy`/`--cdp-endpoint`/`--fingerprint`/
 `--twocaptcha-key`/`--solve-captcha`/`--scraper-api(-cdp)` — the same
@@ -65,7 +66,6 @@ log = logging.getLogger("tipranks.playwright")
 
 # --- site-specific engine constants ---
 NAV_TIMEOUT_MS = 30_000
-READINESS_WAIT_MS = 2_000  # the SPA's own payload fetch happens right after load
 
 _BLOCKED_STATUSES = (403, 429)  # standard "you are blocked/rate-limited" statuses,
 # and — since 2026-09-28 — the ONLY statuses this project has ever actually
@@ -122,57 +122,37 @@ def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]
     tipranks_parser.missing_record_kind), or "remote_api_error" for
     anything else (nav timeout, non-JSON response, etc.) — never raises,
     so one bad ticker can't take a multi-ticker run down with it.
+    Navigates straight to `payload.json`, never the ticker page: live on
+    2026-10-19 Cloudflare answered the ticker page with a 403 challenge from
+    a home IP, a VPN and a residential proxy alike, while `payload.json`
+    answered 200 from all three to a plain headless browser.
     Captcha-solve/retry policy lives in run()'s per-ticker
     loop, not here — this stays a single fetch attempt, matching every
     other engine's fetch_one."""
-    page_url = ticker_page_url(ticker)
     payload_url = ticker_payload_url(ticker)
 
     try:
-        response = page.goto(page_url, timeout=NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+        response = page.goto(payload_url, timeout=NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+        body = response.text() if response is not None else ""
     except Exception:
         return None, "remote_api_error"
 
     status = response.status if response is not None else None
+    if _looks_blocked(status, page.url, body):
+        return None, "blocked"
     if status in _NOT_FOUND_STATUSES:
         return None, "not_found"
-    if status in _BLOCKED_STATUSES or any(m in (page.url or "").lower() for m in BLOCK_URL_MARKERS):
-        return None, "blocked"
-    if status != 200:
-        # Only pay for reading the body when the status alone didn't
-        # already answer the question — the happy path (a clean 200)
-        # never calls page.content() at all, same cost as before this
-        # change.
-        try:
-            html = page.content()
-        except Exception:
-            html = ""
-        if any(m in html.lower() for m in BLOCK_BODY_MARKERS):
-            return None, "blocked"
 
     try:
-        page.wait_for_timeout(READINESS_WAIT_MS)
-        payload = page.evaluate(
-            """async (url) => {
-                const res = await fetch(url, {credentials: 'include'});
-                if (!res.ok) { return {__status: res.status}; }
-                return await res.json();
-            }""",
-            payload_url,
-        )
-    except Exception:
+        payload = json.loads(body) if body else None
+    except ValueError:
         return None, "remote_api_error"
-
-    if isinstance(payload, dict) and payload.get("__status") in _BLOCKED_STATUSES:
-        return None, "blocked"
-    if isinstance(payload, dict) and payload.get("__status") in _NOT_FOUND_STATUSES:
-        return None, "not_found"
     if not isinstance(payload, dict) or "models" not in payload:
         return None, "remote_api_error"
 
     try:
         rating = parse_payload(
-            payload, ticker, source_url=page_url, scraped_at=_now_iso()
+            payload, ticker, source_url=ticker_page_url(ticker), scraped_at=_now_iso()
         )
     except (TypeError, ValueError, AttributeError):
         return None, "remote_api_error"
@@ -191,16 +171,8 @@ def _fetch_one_via_scraper_api(
     2Captcha's own headless browser to run for us (the Scraper API hands
     back a fetched document, it does not let a caller execute arbitrary
     JS and read the result — see scraper_api_client.py's module
-    docstring). **Genuinely untested assumption, stated plainly**: the
-    in-page fetch this repo's browser-based engines use sends
-    `credentials: 'include'` (see fetch_one() above); whether
-    `payload.json` also answers correctly to a completely FRESH, cookie-
-    less request from 2Captcha's own infrastructure — the shape this call
-    makes — has never been confirmed. `stock-analysis/payload.json`
-    fetched separately did answer 200 in the one real block this repo
-    observed (tipranks_parser.py's module docstring), which is suggestive
-    but was still within the SAME browser session's cookies, not a fresh
-    request. Confirm this live (TESTING.md) before relying on it."""
+    docstring). Verified live on 2026-10-19: a fresh, cookie-less request
+    gets the same payload the browser engines read."""
     try:
         result = client.scrape_url(ticker_payload_url(ticker), timeout=timeout, cdp_url=cdp_url)
     except TwoCaptchaAuthError as exc:
@@ -499,9 +471,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Fetch via 2Captcha's Scraper API (scraper.2captcha.com) instead of launching any local "
              "or --cdp-endpoint browser. Requires --twocaptcha-key/TWOCAPTCHA_KEY. Unlike other 2scraper "
              "repos, this fetches ticker_payload_url() directly (the JSON endpoint), not the "
-             "rendered page — see _fetch_one_via_scraper_api()'s docstring for the untested "
-             "assumption this rests on (whether payload.json answers a fresh, cookie-less request "
-             "the same way it answers the in-page fetch this repo's browser engines use). "
+             "rendered page, like the browser engines. "
              "--headed/--executable-path/--proxy/--cdp-endpoint/--fingerprint are all IGNORED in "
              "this mode (a single static fetch per ticker has no browser session, and brings its "
              "own exit IP/device) — set together, they log a warning rather than silently doing "
