@@ -38,6 +38,7 @@ Never construct a competitor's API call from this module.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -45,6 +46,25 @@ from typing import Optional
 import requests
 
 from proxy_pool import redact_credentials
+
+_SCRAPING_BROWSER_RE = re.compile(r"^(?P<scheme>wss?://)(?P<user>[^:@/]+?)-zone-scraping_browser(?P<opts>[^:@/]*):(?P<rest>[^@]+@.+)$")
+
+
+def scraping_browser_url(endpoint: str, *, country: Optional[str] = None, profile_id: Optional[str] = None) -> str:
+    """`endpoint` with `-country-`/`-pid-` set to the given values; the
+    rest of the login, the password and the host are kept as they are.
+    Raises ValueError (without echoing the endpoint, which carries a
+    password) when it is not a Scraping Browser connection string."""
+    m = _SCRAPING_BROWSER_RE.match(endpoint or "")
+    if not m:
+        raise ValueError("not a 2Captcha Scraping Browser endpoint (expected ws://{login}-zone-scraping_browser...:{password}@host:port)")
+    opts = dict(re.findall(r"-(country|pid)-([^-]+)", m.group("opts")))
+    if country:
+        opts["country"] = country
+    if profile_id:
+        opts["pid"] = profile_id
+    suffix = "".join(f"-{k}-{opts[k]}" for k in ("country", "pid") if k in opts)
+    return f"{m.group('scheme')}{m.group('user')}-zone-scraping_browser{suffix}:{m.group('rest')}"
 
 API_BASE = "https://api.2captcha.com"
 SCRAPER_API_BASE = "https://scraper.2captcha.com"
@@ -206,17 +226,18 @@ class TwoCaptchaClient:
     # Scraping Browser API — one live CDP connection per profile
     # ----------------------------------------------------------------- #
     def scraping_browser_connection_url(
-        self, *, country: Optional[str] = None, profile_id: Optional[str] = None
+        self, endpoint: str, *, country: Optional[str] = None, profile_id: Optional[str] = None
     ) -> str:
-        """Returns a `ws://...@cb.2captcha.com:9222` endpoint. Reuse
+        """Returns the caller's own Scraping Browser endpoint
+        (`ws://{login}-zone-scraping_browser[-country-cc][-pid-id]:{password}@host:port`)
+        with its country and profile id replaced when given. Its login and
+        password are the Scraping Browser's own credentials, not the API
+        key: a URL built from the key is refused with "401 Unauthorized
+        Wrong user name format" (seen live 2026-10-19). Reuse
         `profile_id` across runs rather than minting a fresh one every
         time — profiles are capped per account and each allows exactly one
         live connection."""
-        key = self._require_key()
-        login = key  # 2Captcha's Scraping Browser auths the login on the key
-        cc = f"-country-{country}" if country else ""
-        pid = f"-pid-{profile_id}" if profile_id else ""
-        return f"ws://{login}-zone-scraping_browser{cc}{pid}:{key}@cb.2captcha.com:9222"
+        return scraping_browser_url(endpoint, country=country, profile_id=profile_id)
 
     # ----------------------------------------------------------------- #
     # Fingerprint API

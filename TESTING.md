@@ -201,3 +201,23 @@ against at least one real ticker per engine (step 5/6 above), and a Docker
 image that builds and runs. Pull-request CI enforces the offline, import and
 Docker portions; the scheduled canary live-tests Playwright only. Selenium
 and Puppeteer live checks remain an explicit release checklist item.
+
+## Live pass, 2026-10-19
+
+Run from a home Mac (Apple Silicon) behind a VPN, plus a 2Captcha US
+residential proxy, the user's own Scraping Browser endpoint and a 2Captcha
+key.
+
+| Path | Result |
+|---|---|
+| Playwright / pyppeteer over `--cdp-endpoint` | complete (AAPL, MSFT, NVDA, GME, LUV, BRK.B; `ZZZZINVALID` completes with zero rows) |
+| `--scraper-api` | complete; the cookie-less `payload.json` fetch matches the in-page one |
+| `--scraper-api --scraper-api-cdp` | complete after the 0.3.1 fix (built from `TIPRANKS_CDP_ENDPOINT`) |
+| Local headless Playwright, pyppeteer, Selenium, no proxy | exit 3, Cloudflare challenge on the ticker page |
+| Local Playwright + `--fingerprint` | complete, 4 of 4 runs |
+| Playwright / pyppeteer through an authenticated HTTP proxy | proxy auth works (browser exit IP = proxy), then exit 3 on the challenge |
+| Selenium + authenticated proxy | credentials stripped by design (README), exit 5 |
+| pyppeteer's own Chromium on Apple Silicon | crashes as documented; `--executable-path` to Google Chrome works |
+| `diff_runs.py`, Docker image (no `tests/`, no `.env`; `--scraper-api` run inside it complete) | as documented |
+
+No credential appeared in any log, output file or `.meta.json` sidecar.

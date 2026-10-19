@@ -162,7 +162,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 BASE_URL = "https://www.tipranks.com"
 TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,31}$")
@@ -179,7 +179,12 @@ TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,31}$")
 # anywhere in that response's HTML — folding both into one `extra_
 # markers` list handed to `captcha_solver.detect_from_html(body, ...)`
 # would silently just never match on the URL half. Added 2026-09-28.
-BLOCK_BODY_MARKERS = ("just a moment",)
+# `_cf_chl_opt` is the challenge page's own inline config, present whatever
+# language the page is shown in: a Chrome with a Russian locale gets the
+# title "Один момент…", which "just a moment" never matched (seen live
+# 2026-10-19). `cdn-cgi/challenge-platform` is NOT usable here: Cloudflare
+# also loads it on normal, unblocked pages.
+BLOCK_BODY_MARKERS = ("just a moment", "_cf_chl_opt")
 BLOCK_URL_MARKERS = ("__cf_chl_rt_tk",)
 
 # Verbatim capture of https://www.tipranks.com/robots.txt (single
@@ -348,7 +353,7 @@ class TickerRating:
     # Best-effort; see module docstring's note on stale/cached quotes.
     current_price: Optional[float] = None
     current_price_asof: Optional[str] = None
-    current_price_source: Optional[str] = None  # which quotes.<key> was used
+    current_price_source: Optional[str] = None  # "open"/"pre" (a quotes.<key>), "daily" or "daily_history"
 
 
 def _extract_scope(scope: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -406,6 +411,54 @@ def missing_record_kind(payload: Any) -> str:
     return "parser_failed"
 
 
+def _freshest_price(
+    payload: Dict[str, Any], record: Dict[str, Any], ticker: str
+) -> Tuple[Optional[float], Optional[str], Optional[str]]:
+    """(price, as-of, source) from the most recent of the payload's price
+    sources. `quotes.<tradeTime>` alone is not enough: live on 2026-10-19
+    it was weeks or months old where present (AAPL 2026-08-31, NVDA
+    2026-07-27) and absent for MSFT, GME, LUV and BRK.B, while the site's
+    own `priceTarget.upside` was computed from the last trading day's
+    close, carried in `prices.daily` and as the last entry of
+    `stocks_extra[].prices.daily`. Source is the quote key ("open"/"pre"),
+    "daily", or "daily_history"."""
+    candidates = []
+
+    quotes = record.get("quotes")
+    quotes = quotes if isinstance(quotes, dict) else {}
+    trade_time = quotes.get("tradeTime")
+    keys = [trade_time] if isinstance(trade_time, str) else []
+    for key in keys + ["open", "pre"]:
+        quote = quotes.get(key)
+        if isinstance(quote, dict) and isinstance(quote.get("price"), (int, float)):
+            candidates.append((quote.get("lastTrade") or "", quote["price"], key))
+            break
+
+    prices = record.get("prices")
+    daily = prices.get("daily") if isinstance(prices, dict) else None
+    if isinstance(daily, dict) and isinstance(daily.get("price"), (int, float)):
+        candidates.append((daily.get("date") or "", daily["price"], "daily"))
+
+    models = payload.get("models") if isinstance(payload, dict) else None
+    extras = models.get("stocks_extra") if isinstance(models, dict) else None
+    for extra in extras if isinstance(extras, list) else []:
+        if not isinstance(extra, dict) or str(extra.get("_id", "")).upper() != normalize_ticker(ticker):
+            continue
+        history = extra.get("prices", {}).get("daily") if isinstance(extra.get("prices"), dict) else None
+        rows = [r for r in history if isinstance(r, dict) and r.get("date")] if isinstance(history, list) else []
+        if rows:
+            last = max(rows, key=lambda r: r["date"])
+            price = last.get("close") if isinstance(last.get("close"), (int, float)) else last.get("price")
+            if isinstance(price, (int, float)):
+                candidates.append((last["date"], price, "daily_history"))
+        break
+
+    if not candidates:
+        return None, None, None
+    asof, price, source = max(candidates, key=lambda c: c[0])
+    return price, asof or None, source
+
+
 def parse_payload(
     payload: Dict[str, Any], ticker: str, *, source_url: str, scraped_at: str
 ) -> Optional[TickerRating]:
@@ -427,18 +480,7 @@ def parse_payload(
     company = record.get("company")
     company = company if isinstance(company, dict) else {}
 
-    quotes = record.get("quotes")
-    quotes = quotes if isinstance(quotes, dict) else {}
-    trade_time = quotes.get("tradeTime")
-    current_quote = quotes.get(trade_time) if isinstance(trade_time, str) else None
-    current_quote = current_quote if isinstance(current_quote, dict) else None
-    if current_quote is None:
-        # Fall back to whichever known quote sub-object is present.
-        for key in ("open", "pre"):
-            if isinstance(quotes.get(key), dict):
-                current_quote = quotes[key]
-                trade_time = key
-                break
+    current_price, current_price_asof, current_price_source = _freshest_price(payload, record, ticker)
 
     return TickerRating(
         ticker=ticker.upper(),
@@ -466,7 +508,7 @@ def parse_payload(
         best_hold_count=best_scope["hold"],
         best_sell_count=best_scope["sell"],
         best_price_target_average=best_scope["price_target_average"],
-        current_price=(current_quote or {}).get("price"),
-        current_price_asof=(current_quote or {}).get("lastTrade"),
-        current_price_source=trade_time,
+        current_price=current_price,
+        current_price_asof=current_price_asof,
+        current_price_source=current_price_source,
     )

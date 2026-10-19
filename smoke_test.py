@@ -15,6 +15,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 FIXTURES = ROOT / "tests" / "fixtures"
 
+# A developer's own `.env` (or exported credentials) must not change what
+# these checks see: with a credentialed TIPRANKS_CDP_ENDPOINT in `.env`,
+# Selenium refused every run as bad usage and five checks failed. An empty
+# exported variable outranks `.env` (env_config.apply_env), so blank them.
+import os  # noqa: E402
+import env_config  # noqa: E402
+
+for _key in env_config.ENV_KEYS:
+    os.environ[_key] = ""
+
 _checks = []
 _failures = []
 
@@ -70,8 +80,35 @@ def _():
     assert rating.currency == "USD"
     assert rating.best_consensus_rating_id == "moderateBuy"
     assert rating.best_analyst_count == 23
-    assert rating.current_price == 319.97  # the "open" quote, per tradeTime
+    assert rating.current_price == 319.97  # the "open" quote: the fixture carries no fresher price
     assert rating.current_price_source == "open"
+
+
+@check("current_price is the freshest of quotes / prices.daily / stocks_extra daily history (live 2026-10-19: quotes were months stale)")
+def _():
+    from tipranks_parser import parse_payload
+
+    def rating(record, extra=None):
+        payload = {"models": {"stocks": [dict({"_id": "NVDA"}, **record)], "stocks_extra": extra or []}}
+        return parse_payload(payload, "NVDA", source_url="x", scraped_at="x")
+
+    stale_quote = {"quotes": {"tradeTime": "open", "open": {"price": 209.33, "lastTrade": "2026-07-27T08:36:45.000Z"}}}
+    daily = {"prices": {"daily": {"price": 214.13, "date": "2026-10-16T00:00:00.000Z"}}}
+    history = [{"_id": "NVDA", "prices": {"daily": [
+        {"date": "2026-10-15T00:00:00.000Z", "close": 217.23, "price": 217.23},
+        {"date": "2026-10-16T00:00:00.000Z", "close": 214.13, "price": 214.13},
+    ]}}]
+
+    r = rating(dict(stale_quote, **daily))
+    assert (r.current_price, r.current_price_source) == (214.13, "daily"), r
+    assert r.current_price_asof == "2026-10-16T00:00:00.000Z"
+    r = rating({}, history)  # LUV/BRK.B shape: no quotes, no prices on the record
+    assert (r.current_price, r.current_price_source) == (214.13, "daily_history"), r
+    fresh_quote = {"quotes": {"tradeTime": "open", "open": {"price": 215.0, "lastTrade": "2026-10-16T19:59:00.000Z"}}}
+    r = rating(dict(fresh_quote, **daily), history)
+    assert (r.current_price, r.current_price_source) == (215.0, "open"), r
+    r = rating({})
+    assert (r.current_price, r.current_price_asof, r.current_price_source) == (None, None, None)
 
 
 @check("parse_payload degrades gracefully when consensus fields are absent")
@@ -633,7 +670,7 @@ def _():
         assert '"--scraper-api-country"' in src, f"{path}: no --scraper-api-country flag"
         assert '"--scraper-api-profile-id"' in src, f"{path}: no --scraper-api-profile-id flag"
         assert "cdp_url=cdp_url" in src, f"{path}: the scraper-api fetch path is not called with cdp_url"
-        assert "scraping_browser_connection_url(" in src, f"{path}: --scraper-api-cdp never builds a Scraping Browser URL"
+        assert "scraping_browser_connection_url(\n                    args.cdp_endpoint" in src, f"{path}: --scraper-api-cdp does not build its URL from --cdp-endpoint"
         assert "--scraper-api-cdp requires --scraper-api" in src, f"{path}: --scraper-api-cdp isn't guarded to require --scraper-api"
 
 
@@ -656,18 +693,29 @@ def _():
             rc = mod.main(["--ticker", "AAPL", "--scraper-api-cdp"])
             assert rc == ow.EXIT_BAD_USAGE, f"{mod.__name__}: got {rc}"
 
+            # Without the user's own Scraping Browser endpoint there is no
+            # login to build one from (the API key is not it): bad usage.
+            rc = mod.main([
+                "--ticker", "AAPL", "--twocaptcha-key", "fake-key-for-test-only",
+                "--scraper-api", "--scraper-api-cdp",
+            ])
+            assert rc == ow.EXIT_BAD_USAGE, f"{mod.__name__}: --scraper-api-cdp without an endpoint got {rc}"
+            assert "cdp_url" not in captured, f"{mod.__name__}: fetched without an endpoint"
+
             with tempfile.TemporaryDirectory() as td:
                 mod.main([
                     "--ticker", "AAPL",
                     "--twocaptcha-key", "fake-key-for-test-only",
+                    "--cdp-endpoint", "ws://sbuser-zone-scraping_browser-country-de:sbpass@cb.2captcha.com:9222",
                     "--scraper-api", "--scraper-api-cdp",
                     "--scraper-api-country", "us", "--scraper-api-profile-id", "smoke-test-profile",
                     "--out", str(Path(td) / "out.json"), "--allow-empty",
                 ])
             cdp_url = captured.get("cdp_url")
-            assert cdp_url, f"{mod.__name__}: --scraper-api-cdp did not produce a cdp_url"
-            assert "-country-us" in cdp_url, f"{mod.__name__}: cdp_url missing requested country: {cdp_url!r}"
-            assert "-pid-smoke-test-profile" in cdp_url, f"{mod.__name__}: cdp_url missing requested profile id: {cdp_url!r}"
+            assert cdp_url == "ws://sbuser-zone-scraping_browser-country-us-pid-smoke-test-profile:sbpass@cb.2captcha.com:9222", (
+                f"{mod.__name__}: cdp_url not built from the endpoint's own login/password with the requested country/profile: {cdp_url!r}"
+            )
+            assert "fake-key-for-test-only" not in cdp_url, f"{mod.__name__}: the API key leaked into the Scraping Browser login"
 
             captured.clear()
             with tempfile.TemporaryDirectory() as td:
@@ -1348,6 +1396,74 @@ def _():
     assert not hits, hits
 
 
+
+# --------------------------------------------------------------------------- #
+# Found in the 2026-10-19 live test pass
+# --------------------------------------------------------------------------- #
+@check("scraping_browser_url keeps the endpoint's own login/password/host, sets country/pid, and never echoes a bad endpoint")
+def _():
+    from scraper_api_client import scraping_browser_url
+
+    base = "ws://abc-zone-scraping_browser-country-us-pid-p1:secretpw@cb.2captcha.com:9222"
+    assert scraping_browser_url(base) == base
+    assert scraping_browser_url(base, country="de") == "ws://abc-zone-scraping_browser-country-de-pid-p1:secretpw@cb.2captcha.com:9222"
+    assert scraping_browser_url("ws://abc-zone-scraping_browser:pw@h:1", profile_id="p9") == "ws://abc-zone-scraping_browser-pid-p9:pw@h:1"
+    try:
+        scraping_browser_url("ws://plainuser:secretpw@host:9222")
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "secretpw" not in str(exc)
+
+
+@check("user_agent_from reads the live Fingerprint API shape (userAgent.userAgent, then navigator.userAgent)")
+def _():
+    import fingerprint_client as fc
+
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+    assert fc.user_agent_from({"userAgent": {"userAgent": ua, "platform": "Windows"}}) == ua
+    assert fc.user_agent_from({"userAgent": {"platform": "Windows"}, "navigator": {"userAgent": ua}}) == ua
+    assert fc.user_agent_from({"userAgent": ua}) == ua
+    assert fc.user_agent_from({"id": 1}) is None
+
+
+@check("the 'Ignoring --fingerprint' warning is only checked for when --fingerprint was passed")
+def _():
+    for path in ("playwright_scraper.py", "selenium_scraper.py", "puppeteer_scraper.py"):
+        src = (ROOT / path).read_text(encoding="utf-8")
+        assert "args.fingerprint and refuse_if_cdp(args.cdp_endpoint)" in src, path
+
+
+@check("block detection does not depend on the challenge page's language (a ru-RU Chrome shows 'Один момент…')")
+def _():
+    from tipranks_parser import BLOCK_BODY_MARKERS
+
+    html = "<html><head><title>Один момент…</title></head><body><script>(function(){window._cf_chl_opt = {cvId: '3'};})();</script></body></html>"
+    assert any(m in html.lower() for m in BLOCK_BODY_MARKERS)
+    normal = '<html><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script><title>Apple (AAPL)</title></html>'
+    assert not any(m in normal.lower() for m in BLOCK_BODY_MARKERS), "a normal page also loads challenge-platform"
+
+
+@check("proxy_pool refuses a credentialed SOCKS proxy, and no parse error echoes the line (it can carry a password)")
+def _():
+    import proxy_pool
+
+    for bad in ("socks5://user:secretpass@host.example:1080", "http://user:secretpass@host.example"):
+        try:
+            proxy_pool.load_proxies(bad, None)
+            raise AssertionError(f"expected ProxyParseError for {bad}")
+        except proxy_pool.ProxyParseError as exc:
+            assert "secretpass" not in str(exc), str(exc)
+    assert proxy_pool.load_proxies("socks5://host.example:1080", None)[0].scheme == "socks5"
+
+
+@check("pyppeteer answers proxy auth through the CDP Fetch domain, not page.authenticate() (Network.setRequestInterception is gone from current Chrome)")
+def _():
+    src = (ROOT / "puppeteer_scraper.py").read_text(encoding="utf-8")
+    assert "await page.authenticate(" not in src
+    assert '"Fetch.enable", {"handleAuthRequests": True' in src
+    assert '== "Proxy"' in src, "credentials must only answer the proxy's own challenge"
+
+
 def main() -> int:
     passed = 0
     for name, fn in _checks:
@@ -1366,3 +1482,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
