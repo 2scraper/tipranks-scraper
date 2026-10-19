@@ -126,15 +126,8 @@ documented exceptions:
 **`--scraper-api`** sends one browserless HTTP call to 2Captcha's Scraper
 API (`scraper.2captcha.com`) instead of launching any local or
 `--cdp-endpoint` browser. Requires `--twocaptcha-key`/`TWOCAPTCHA_KEY`.
-**It fetches the JSON endpoint, not the rendered page**: this repo's
-parser needs the
-same-origin `stock-analysis/payload.json` JSON endpoint, normally
-fetched via an authenticated in-page `fetch()` call — the Scraper API
-can't run arbitrary page JS and hand back the result, so `--scraper-api`
-here fetches `payload.json` directly. **Whether that endpoint answers a
-fresh, cookie-less request the same way it answers the in-page fetch is
-a genuinely untested assumption** — see
-`playwright_scraper.py`'s `_fetch_one_via_scraper_api()` docstring and
+**It fetches the JSON endpoint, not the rendered page**, like every
+browser engine (see "Engine notes"). Verified live on 2026-10-19 — see
 `TESTING.md`. `--headed`/`--executable-path`/`--proxy`/`--cdp-endpoint`/
 `--fingerprint` are all ignored in this mode (logged as a warning, not
 silently dropped) — a single static fetch per ticker has no browser
@@ -241,21 +234,21 @@ trying the runner's own IP and reports the expected refusal as a notice.
 
 ## Engine notes
 
-- **Playwright / Puppeteer** read the real HTTP status from the
-  navigation response to detect an unknown ticker (a real 404/400), and
-  also check the confirmed Cloudflare block markers (`tipranks_parser.
-  BLOCK_URL_MARKERS`/`BLOCK_BODY_MARKERS`) against the navigation
-  response/URL. Both are also the only two engines that can open an
+- **Every engine navigates straight to `payload.json`**, never the
+  ticker page. Live on 2026-10-19 Cloudflare challenged the ticker page
+  (403, "Just a moment…") from a home IP, a VPN and a residential proxy,
+  with or without `--fingerprint`, while the payload answered 200 from
+  all three: a plain local run then collected 30 of 30 tickers.
+- **Playwright / Puppeteer** read the real HTTP status of that response
+  to detect an unknown ticker (a real 404/400), and also check the
+  confirmed Cloudflare block markers (`tipranks_parser.
+  BLOCK_URL_MARKERS`/`BLOCK_BODY_MARKERS`) against the response/URL. Both are also the only two engines that can open an
   authenticated `--cdp-endpoint` session (e.g. the 2Captcha Scraping
   Browser API) and arm its own `Captcha.setAutoSolve` CDP domain.
-- **Selenium**: chromedriver doesn't expose the navigation response's
-  HTTP status directly, so `selenium_scraper.py` detects a not-found page
-  via the confirmed real title string (`"Error 404: Page Not Found"`)
-  instead — a documented, named difference, not a silent gap. The same
-  status-blindness narrows (but doesn't close) its block detection: it
-  checks the same URL/body markers right after navigation, but can only
-  see a 403/429 on the in-page `payload.json` fetch, not the initial page
-  load. `--cdp-endpoint` is refused outright when it carries credentials
+- **Selenium**: chromedriver doesn't expose the response's HTTP
+  status, so `selenium_scraper.py` reads the site's own JSON answer
+  instead (`{"msg": "ticker not found"}` is "not found") and detects a
+  block from the same URL/body markers only. `--cdp-endpoint` is refused outright when it carries credentials
   — see "2Captcha toolkit" above.
 - **Puppeteer (legacy/experimental)**: pyppeteer is effectively unmaintained.
   Confirmed live on a real Apple Silicon Mac — pyppeteer's
@@ -280,14 +273,12 @@ list and the live-testing checklist.
 - No confirmed CAPTCHA widget on this site — `captcha_solver.py`'s
   solving plumbing is shipped for family parity and may simply find
   nothing to solve; see "2Captcha toolkit" above.
-- `--scraper-api` fetches `payload.json` directly instead of the
-  rendered page. Verified live on 2026-10-19: a fresh, cookie-less
-  request gets the same payload as the in-page fetch.
-- From a home or VPN IP, a plain local headless run usually meets a
-  Cloudflare challenge on the ticker page (exit 3), even through a
-  residential proxy. On 2026-10-19 the same local Playwright run passed
-  3 of 3 times with `--fingerprint` and was blocked 2 of 2 times without
-  it. `--cdp-endpoint` and `--scraper-api` passed every time.
+- The ticker page itself sits behind a Cloudflare challenge that this
+  repo does not solve (it is Cloudflare's own challenge page, not a
+  Turnstile widget on the site); the engines avoid it by reading
+  `payload.json` directly. If Cloudflare ever puts the payload behind the
+  same challenge, local runs will exit 3; `--cdp-endpoint` solves it on
+  2Captcha's side.
 - Only the ticker forecast page. No screener/stock-list pages, no
   insider-trading pages, no hedge fund activity pages — all real
   sections of the same site, out of scope here.
