@@ -14,6 +14,11 @@ works against tipranks.com right now."
 - `tipranks_parser.find_ticker_record` picks the requested ticker out of
   a payload's `models.stocks` list, never `stocks[0]` (that list also
   carries unrelated sidebar entries).
+- When the ticker also appears in its own sidebar as a stub listed
+  before its full record, `find_ticker_record` takes the full one
+  (`tipranks_abnb_sidebar_stub_first.json`, trimmed from a live ABNB
+  payload). Found in a 503-ticker S&P 500 run on 2026-10-20: 55 tickers
+  had lost Smart Score and consensus to the stub.
 - `parse_payload` extracts every confirmed field correctly from a real
   captured fixture (`tests/fixtures/tipranks_aapl_stock_analysis.json`),
   and degrades gracefully — never crashes, never fabricates a value —

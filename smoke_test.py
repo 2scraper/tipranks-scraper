@@ -55,6 +55,25 @@ def _():
     assert find_ticker_record(payload, "NOPE") is None
 
 
+@check("find_ticker_record picks the ticker's full record over its own sidebar stub listed first "
+       "(live 2026-10-20: 55 of the S&P 500, e.g. ABNB, lost Smart Score and consensus)")
+def _():
+    from tipranks_parser import find_ticker_record, parse_payload
+
+    payload = _load_fixture("tipranks_abnb_sidebar_stub_first.json")
+    ids = [s["_id"] for s in payload["models"]["stocks"]]
+    assert ids.count("ABNB") == 2 and "smartScore" not in payload["models"]["stocks"][ids.index("ABNB")], (
+        "fixture must keep the stub before the full record"
+    )
+    assert "smartScore" in find_ticker_record(payload, "ABNB")
+    row = parse_payload(payload, "ABNB", source_url="x", scraped_at="x")
+    assert row.smart_score == 10, row.smart_score
+    assert row.consensus_rating_id == "moderateBuy", row.consensus_rating_id
+    assert (row.analyst_count, row.buy_count, row.hold_count, row.sell_count) == (33, 22, 10, 1)
+    assert (row.price_target_high, row.price_target_low) == (220, 150)
+    assert row.current_price is not None
+
+
 @check("parse_payload extracts confirmed AAPL fields correctly")
 def _():
     from tipranks_parser import parse_payload

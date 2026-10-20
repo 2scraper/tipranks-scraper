@@ -282,6 +282,12 @@ list and the live-testing checklist.
   `payload.json` directly. If Cloudflare ever puts the payload behind the
   same challenge, local runs will exit 3; `--cdp-endpoint` solves it on
   2Captcha's side.
+- No rate limiting seen so far: on 2026-10-20 the whole S&P 500 (503
+  tickers) ran three times back to back from one home IP with
+  Playwright, about 1,500 requests in 8 minutes, one ticker after
+  another with no pause. Every run: 503 of 503, exit 0, no 403/429,
+  125–165 s each. Running several engines or machines in parallel was
+  not tested.
 - Only the ticker forecast page. No screener/stock-list pages, no
   insider-trading pages, no hedge fund activity pages — all real
   sections of the same site, out of scope here.

@@ -1,0 +1,159 @@
+{
+  "_meta": {
+    "take": 57,
+    "app": "backend",
+    "v": 2,
+    "time": "2026-10-20T08:47:58.238Z"
+  },
+  "models": {
+    "stocks": [
+      {
+        "_id": "BKNG",
+        "company": {
+          "name": "Booking Holdings"
+        }
+      },
+      {
+        "_id": "EXPE",
+        "company": {
+          "name": "Expedia"
+        }
+      },
+      {
+        "_id": "MMYT",
+        "company": {
+          "name": "Makemytrip"
+        }
+      },
+      {
+        "_id": "TCOM",
+        "company": {
+          "name": "Trip.com Group Sponsored ADR"
+        }
+      },
+      {
+        "_id": "ABNB",
+        "analystRatings": {
+          "all": {
+            "priceTarget": {
+              "value": 189.73333333333332,
+              "upside": 0.08134807553478285
+            }
+          }
+        },
+        "company": {
+          "name": "Airbnb"
+        }
+      },
+      {
+        "_id": "ABNB",
+        "analystRatings": {
+          "all": {
+            "buy": 22,
+            "hold": 10,
+            "sell": 1,
+            "total": 33,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 189.73333333333332,
+              "upside": 0.08134807553478285
+            },
+            "highPriceTarget": 220,
+            "lowPriceTarget": 150
+          },
+          "best": {
+            "buy": 18,
+            "hold": 9,
+            "sell": 1,
+            "total": 28,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 187.84,
+              "upside": 0.07055739199817622
+            },
+            "highPriceTarget": 220,
+            "lowPriceTarget": 150
+          },
+          "lastRating": {
+            "date": "2026-10-15T00:00:00.000Z"
+          },
+          "sevenDaysConsensus": {
+            "buy": 1,
+            "hold": 0,
+            "sell": 0,
+            "total": 1,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 217,
+              "upside": 0.23674911660777387
+            },
+            "highPriceTarget": 217,
+            "lowPriceTarget": 217
+          },
+          "thirtyDaysConsensus": {
+            "buy": 5,
+            "hold": 0,
+            "sell": 0,
+            "total": 5,
+            "id": "strongBuy",
+            "enumId": 5,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 200.6,
+              "upside": 0.14328051977658726
+            },
+            "highPriceTarget": 217,
+            "lowPriceTarget": 185
+          }
+        },
+        "company": {
+          "name": "Airbnb"
+        },
+        "quotes": {
+          "pre": {
+            "change": {
+              "amount": 2.9000000000000057,
+              "percent": 0.020552799433026264
+            },
+            "price": 144,
+            "lastTrade": "2026-07-27T13:30:00.000Z",
+            "volume": 3268
+          },
+          "realTime": true,
+          "currency": "USD",
+          "open": {
+            "lastTrade": "2026-07-27T16:38:14.000Z",
+            "change": {
+              "percent": 0.035719347980155865,
+              "amount": 5.039999999999992
+            },
+            "price": 190.5,
+            "ask": 0,
+            "bid": 0,
+            "volume": 888453
+          },
+          "tradeTime": "open",
+          "after": {
+            "change": {
+              "amount": -0.42099999999999227,
+              "percent": -0.003175201749754825
+            },
+            "lastTrade": "2026-03-23T23:56:32.000Z",
+            "price": 132.169,
+            "volume": 406310
+          }
+        },
+        "smartScore": {
+          "update": "2026-10-18T00:00:00.000Z",
+          "value": 10
+        }
+      }
+    ]
+  }
+}
