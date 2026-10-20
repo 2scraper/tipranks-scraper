@@ -57,6 +57,12 @@ works against tipranks.com right now."
   installed, and reject bad usage (no tickers, a robots.txt-disallowed
   path, an unreadable `--tickers-file`) identically, before any network
   call.
+- Dead-proxy failover: `ProxyPool.replace_dead` goes to the next live
+  proxy in file order (wrapping) and never drops the last one; every
+  engine's fetch maps a `PROXY_DEAD_MARKERS` error to `proxy_dead` and
+  anything else to `remote_api_error`. The relaunch itself needs a
+  browser and was checked live: local `pproxy` relays (one with
+  `--auth 0` and a password) behind two dead `127.0.0.1` ports.
 - `--tickers-file` skips blank lines and `#` comments (whole-line and
   trailing) in all three engines, and a comments-only file is bad usage.
 - pyppeteer's `installed_chrome()` returns a Chrome/Chromium only on

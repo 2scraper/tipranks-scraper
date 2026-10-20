@@ -716,6 +716,59 @@ def _():
         raise AssertionError("malformed proxy line was accepted")
 
 
+@check("ProxyPool.replace_dead moves to the next live proxy in file order, wrapping, "
+       "and leaves the last live proxy in place instead of failing the run")
+def _():
+    a, b, c = (_proxy_pool.parse_proxy_line(f"http://127.0.0.1:{port}") for port in (1, 2, 3))
+    pool = _proxy_pool.ProxyPool([a, b, c])
+    assert pool.next() is a
+    assert pool.replace_dead(a) is b
+    assert pool.replace_dead(b) is c
+    assert pool.replace_dead(c) is None, "c is the last live proxy"
+    assert pool.next() is c, "c must stay live"
+
+    pool = _proxy_pool.ProxyPool([a, b, c])
+    assert pool.replace_dead(c) is a, "wraps to the start of the list"
+    assert _proxy_pool.ProxyPool([a]).replace_dead(a) is None
+    assert pool.replace_dead(_proxy_pool.parse_proxy_line("http://127.0.0.1:9")) is None, "unknown proxy"
+
+
+@check("every engine's fetch reports a dead proxy as 'proxy_dead' (so run() can switch "
+       "to the next one) and any other navigation error as 'remote_api_error'")
+def _():
+    import asyncio
+
+    def failing(message):
+        def fail(*args, **kwargs):
+            raise RuntimeError(message)
+        return fail
+
+    def afailing(message):
+        async def fail(*args, **kwargs):
+            raise RuntimeError(message)
+        return fail
+
+    dead = "net::ERR_PROXY_CONNECTION_FAILED at https://www.tipranks.com/x"
+    other = "Timeout 30000ms exceeded.\nCall log: ..."
+    for message, expected in ((dead, "proxy_dead"), (other, "remote_api_error")):
+        page = type("Page", (), {"goto": staticmethod(failing(message))})()
+        assert playwright_scraper.fetch_one(page, "AAPL") == (None, expected), (message, "playwright")
+
+        driver = type("Driver", (), {
+            "set_page_load_timeout": staticmethod(lambda *_: None),
+            "get": staticmethod(failing("Message: unknown error: " + message)),
+        })()
+        assert selenium_scraper.fetch_one(driver, "AAPL") == (None, expected), (message, "selenium")
+
+        apage = type("Page", (), {"goto": staticmethod(afailing(message))})()
+        loop = asyncio.new_event_loop()
+        try:
+            got = loop.run_until_complete(puppeteer_scraper.fetch_one_async(apage, "AAPL"))
+        finally:
+            loop.close()
+        assert got == (None, expected), (message, "puppeteer")
+
+
 @check("proxy_pool parses a credentialed proxy and masks the password (not the login) in logs")
 def _():
     proxy = _proxy_pool.parse_proxy_line("http://user1234:pass5678@1.2.3.4:8080")

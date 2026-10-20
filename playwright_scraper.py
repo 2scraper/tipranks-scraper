@@ -48,7 +48,7 @@ from captcha_solver import CaptchaType, SolveBudget, build_injection_script, sol
 from env_config import apply_env, int_between, non_negative_int
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run
-from proxy_pool import ProxyParseError, ProxyPool, load_proxies, redact_credentials
+from proxy_pool import ProxyParseError, ProxyPool, is_proxy_dead_error, load_proxies, redact_credentials
 from scraper_api_client import TwoCaptchaAuthError, TwoCaptchaClient, TwoCaptchaError
 from tipranks_parser import (
     BLOCK_BODY_MARKERS,
@@ -73,6 +73,13 @@ _BLOCKED_STATUSES = (403, 429)  # standard "you are blocked/rate-limited" status
 # observed a real block return (see tipranks_parser.BLOCK_BODY_MARKERS'
 # module comment).
 _NOT_FOUND_STATUSES = (404, 400)
+
+
+def _first_line(exc: Exception) -> str:
+    """An exception's first line, credentials redacted: driver errors
+    append whole call logs and stack traces after it."""
+    lines = str(exc).strip().splitlines()
+    return redact_credentials(lines[0] if lines else type(exc).__name__)
 
 
 def _now_iso() -> str:
@@ -120,8 +127,9 @@ def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]
     success, "not_found" for a real 404/400, "blocked" for a real 403/429
     or a confirmed body/URL block marker, "parser_failed" for a served
     payload whose stock list no longer yields the ticker's record (see
-    tipranks_parser.missing_record_kind), or "remote_api_error" for
-    anything else (nav timeout, non-JSON response, etc.) — never raises,
+    tipranks_parser.missing_record_kind), "proxy_dead" when the browser
+    could not get through its proxy (proxy_pool.PROXY_DEAD_MARKERS), or
+    "remote_api_error" for anything else (nav timeout, non-JSON response, etc.) — never raises,
     so one bad ticker can't take a multi-ticker run down with it.
     Navigates straight to `payload.json`, never the ticker page: live on
     2026-10-19 Cloudflare answered the ticker page with a 403 challenge from
@@ -135,7 +143,10 @@ def fetch_one(page, ticker: str) -> Tuple[Optional[TickerRating], Optional[str]]
     try:
         response = page.goto(payload_url, timeout=NAV_TIMEOUT_MS, wait_until="domcontentloaded")
         body = response.text() if response is not None else ""
-    except Exception:
+    except Exception as exc:
+        if is_proxy_dead_error(str(exc)):
+            return None, "proxy_dead"
+        log.warning("Could not fetch %s: %s", ticker, _first_line(exc))
         return None, "remote_api_error"
 
     status = response.status if response is not None else None
@@ -254,6 +265,16 @@ def _maybe_solve_captcha(
     # independently agree — logged at debug level only, nothing actionable.
 
 
+def _launch(pw, *, headless: bool, executable_path: Optional[str], proxy):
+    launch_kwargs = {"headless": headless}
+    if executable_path:
+        launch_kwargs["executable_path"] = executable_path
+    if proxy:
+        launch_kwargs["proxy"] = proxy.playwright_proxy_dict()
+        log.info("Using proxy %s", proxy.masked())
+    return pw.chromium.launch(**launch_kwargs)
+
+
 def run(
     tickers: List[str], *,
     headless: bool = True,
@@ -271,16 +292,15 @@ def run(
     the exit-code implications. `executable_path`, if given, is passed
     straight to `chromium.launch()`.
 
-    **Scoping decision, stated plainly**: this repo picks ONE proxy for the
-    WHOLE run (via `proxy_pool.next()`, once, respecting `--proxy-shuffle`)
-    and does not rotate mid-run on failure. A ticker loop with one small
-    JSON fetch per ticker doesn't carry the per-page volume that
-    proxy rotation is built for in scrolling scrapers, and tearing down
-    and relaunching the browser per ticker to support live rotation would
-    be a lot of complexity for a benefit this repo has no evidence yet
-    that it needs — `--proxy-file` still lets a caller pick a different
-    proxy across separate invocations. Revisit if live testing shows
-    otherwise (TESTING.md)."""
+    **Proxies**: the run uses ONE proxy (`proxy_pool.next()`, respecting
+    `--proxy-shuffle`) and does not rotate per ticker or on a block: a
+    ticker loop with one small JSON fetch per ticker doesn't carry the
+    per-page volume rotation is built for. The one exception is a dead
+    proxy (the browser cannot get through it at all): then the browser is
+    relaunched on the next live proxy from `--proxy-file` and the same
+    ticker is fetched again (`proxy_pool.replace_dead`). With no other
+    proxy left the ticker fails as a remote error, with a warning saying
+    why."""
     if sync_playwright is None:
         raise RuntimeError("playwright is not installed")
 
@@ -301,13 +321,7 @@ def run(
                 cdp_connect_failed = True
                 browser = None
         else:
-            launch_kwargs = {"headless": headless}
-            if executable_path:
-                launch_kwargs["executable_path"] = executable_path
-            if proxy:
-                launch_kwargs["proxy"] = proxy.playwright_proxy_dict()
-                log.info("Using proxy %s", proxy.masked())
-            browser = pw.chromium.launch(**launch_kwargs)
+            browser = _launch(pw, headless=headless, executable_path=executable_path, proxy=proxy)
 
         if cdp_connect_failed:
             # A broken remote
@@ -324,6 +338,7 @@ def run(
             if cdp_endpoint:
                 _enable_scraping_browser_auto_solve(context, page)
 
+            warned_last_proxy = False
             for ticker in tickers:
                 rating = None
                 error_kind = None
@@ -331,6 +346,23 @@ def run(
                 budget = SolveBudget()
                 for attempt in range(block_retries + 1):
                     rating, error_kind = fetch_one(page, ticker)
+                    while error_kind == "proxy_dead":
+                        replacement = proxy_pool.replace_dead(proxy) if proxy_pool and proxy else None
+                        if replacement is None:
+                            if not warned_last_proxy:
+                                log.warning(
+                                    "Cannot get through proxy %s and there is no other proxy to switch to.",
+                                    proxy.masked() if proxy else "(none)",
+                                )
+                                warned_last_proxy = True
+                            error_kind = "remote_api_error"
+                            break
+                        log.warning("Proxy %s is dead — switching to %s.", proxy.masked(), replacement.masked())
+                        browser.close()
+                        proxy = replacement
+                        browser = _launch(pw, headless=headless, executable_path=executable_path, proxy=proxy)
+                        page = browser.new_page(user_agent=user_agent) if user_agent else browser.new_page()
+                        rating, error_kind = fetch_one(page, ticker)
                     if error_kind != "blocked":
                         break
                     # Over --cdp-endpoint, 2Captcha's own auto-solve (armed

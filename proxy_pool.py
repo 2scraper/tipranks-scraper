@@ -196,6 +196,24 @@ class ProxyPool:
     def report_success(self, proxy: Proxy) -> None:
         self._blocked_count[id(proxy)] = 0
 
+    def replace_dead(self, proxy: Proxy) -> Optional[Proxy]:
+        """The next live proxy after `proxy` (in list order, wrapping), with
+        `proxy` marked dead; None when no other live proxy is left. Then
+        `proxy` stays live: the engine keeps using it, so one false
+        PROXY_DEAD_MARKERS match on a working last proxy cannot fail the
+        rest of the run."""
+        key = id(proxy)
+        if key not in self._dead:
+            return None
+        start = next(i for i, p in enumerate(self._proxies) if p is proxy)
+        n = len(self._proxies)
+        for step in range(1, n):
+            candidate = self._proxies[(start + step) % n]
+            if not self._dead[id(candidate)]:
+                self._dead[key] = True
+                return candidate
+        return None
+
 
 def is_proxy_dead_error(message: str) -> bool:
     return any(marker in message for marker in PROXY_DEAD_MARKERS)
