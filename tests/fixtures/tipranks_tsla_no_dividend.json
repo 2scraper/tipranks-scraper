@@ -1,0 +1,202 @@
+{
+  "_meta": {
+    "take": 632,
+    "app": "backend",
+    "v": 2,
+    "time": "2026-10-20T11:45:34.067Z"
+  },
+  "models": {
+    "stocks": [
+      {
+        "_id": "TSLA",
+        "analystRatings": {
+          "all": {
+            "buy": 14,
+            "hold": 11,
+            "sell": 2,
+            "total": 27,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 402.4721739130435,
+              "upside": 0.0934960982259523
+            },
+            "highPriceTarget": 550,
+            "lowPriceTarget": 24.86
+          },
+          "best": {
+            "buy": 8,
+            "hold": 5,
+            "sell": 1,
+            "total": 14,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 430.07692307692304,
+              "upside": 0.16849677519133566
+            },
+            "highPriceTarget": 550,
+            "lowPriceTarget": 220
+          },
+          "lastRating": {
+            "date": "2026-10-20T00:00:00.000Z"
+          },
+          "threeDaysConsensus": {
+            "buy": 2,
+            "hold": 0,
+            "sell": 0,
+            "total": 2,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 485,
+              "upside": 0.3177199369667989
+            },
+            "highPriceTarget": 485,
+            "lowPriceTarget": 485
+          },
+          "sevenDaysConsensus": {
+            "buy": 2,
+            "hold": 3,
+            "sell": 0,
+            "total": 5,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 417.5,
+              "upside": 0.1343259251209042
+            },
+            "highPriceTarget": 485,
+            "lowPriceTarget": 370
+          },
+          "thirtyDaysConsensus": {
+            "buy": 8,
+            "hold": 7,
+            "sell": 0,
+            "total": 15,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 435.84615384615387,
+              "upside": 0.18417147705850676
+            },
+            "highPriceTarget": 550,
+            "lowPriceTarget": 370
+          }
+        },
+        "company": {
+          "name": "Tesla"
+        },
+        "smartScore": {
+          "update": "2026-10-18T00:00:00.000Z",
+          "value": 4
+        },
+        "lastEarning": {
+          "fiscalPeriod": 2,
+          "fiscalQuarterEnding": "2026-06-30T00:00:00.000Z",
+          "fiscalYear": 2026,
+          "lastYearValue": 0.4,
+          "nextPeriodEnding": null,
+          "periodEnding": "2026-06-30T00:00:00.000Z",
+          "reportOnTimeOfDay": "AfterHours",
+          "reported": "2026-07-22T00:00:00.000Z",
+          "reportedEPS": 0.33,
+          "salesEstimate": 26423384000,
+          "salesHighEstimate": 29273000000,
+          "salesLowEstimate": 21262000000,
+          "value": 0.533,
+          "epsLowEstimate": 0.27,
+          "epsHighEstimate": 0.74,
+          "totalRevenue": 28236000000,
+          "totalIncome": 1116000000,
+          "enterpriseValue": 1461645,
+          "enterpriseValueCurrencyID": 1
+        },
+        "nextEarning": {
+          "fiscalPeriod": 3,
+          "fiscalQuarterEnding": "2026-09-30T00:00:00.000Z",
+          "fiscalYear": 2026,
+          "lastYearValue": 0.5,
+          "nextPeriodEnding": null,
+          "periodEnding": "2026-09-30T00:00:00.000Z",
+          "reportOnTimeOfDay": "AfterHours",
+          "reported": "2026-10-21T00:00:00.000Z",
+          "reportedEPS": null,
+          "salesEstimate": 27935196000,
+          "salesHighEstimate": 30584552000,
+          "salesLowEstimate": 24300000000,
+          "value": 0.448,
+          "epsLowEstimate": 0.3,
+          "epsHighEstimate": 0.702,
+          "totalRevenue": null,
+          "totalIncome": null,
+          "enterpriseValue": null,
+          "enterpriseValueCurrencyID": null,
+          "epsEstimateFY": 1.68453,
+          "revenueEstimateFY": 107067807295,
+          "peEstimateFY": 218.49417938534782,
+          "psEstimateFY": 13.588042117940526
+        },
+        "insiderActivity": {
+          "signal": null,
+          "sentiment": null,
+          "trend": null,
+          "currency": "USD",
+          "shareTrend": 0
+        },
+        "hedgeFundActivity": {
+          "signal": 0.1488,
+          "sentiment": "veryNegative",
+          "trend": -1635096,
+          "currency": null,
+          "shareTrend": null
+        },
+        "investorActivity": {
+          "all": {
+            "score": 0.2532,
+            "sentiment": "negative",
+            "avg": 0.06353697578341902,
+            "change": {
+              "days30": -0.010110197749218742,
+              "days7": -0.001902305545006701
+            },
+            "holding": 77144,
+            "percentAllocated": 0.087522
+          }
+        },
+        "newsSentiment": {
+          "buzz": {
+            "value": 1.231833910034602,
+            "lastWeek": 173,
+            "positive": {
+              "articlesInLastWeek": 173,
+              "buzz": 1.231833910034602,
+              "weeklyAverage": 139.5
+            },
+            "weeklyAvg": 139.5
+          },
+          "negative": 0.21153846153846156,
+          "positive": 0.7884615384615384,
+          "score": 0.7027,
+          "sentiment": "positive"
+        },
+        "bloggerOpinions": {
+          "consensus": {
+            "ratioPositive": 0.5461538461538461,
+            "signal": "neutral",
+            "signalEnumId": 2,
+            "negative": 276,
+            "neutral": 19,
+            "positive": 355,
+            "total": 650
+          }
+        }
+      }
+    ]
+  }
+}

@@ -48,6 +48,42 @@ Per ticker:
   Not a real-time quote.
 - `company_name`, `currency`, `source_url`, `scraped_at`.
 
+From the same payload, added in 0.6.0 as columns after the ones above
+(so existing CSV column positions are unchanged):
+
+- **Dividends**: `dividend_amount`, `dividend_ex_date`,
+  `dividend_pay_date`, `dividend_frequency`,
+  `dividend_annualized_payout`, `dividend_yield`, `dividend_payout_ratio`
+  for the latest dividend, and `next_dividend_amount` / `_ex_date` /
+  `_pay_date` once the next one is declared. All empty for a non-payer.
+  A suspended payer keeps its last dividend with an empty yield (GME:
+  2019), so check `dividend_ex_date`.
+- **Earnings**: `last_earnings_date`, `last_earnings_eps`,
+  `last_earnings_eps_estimate`, `next_earnings_date`,
+  `next_earnings_time` (`PreMarket` / `AfterHours` / `Unknown`),
+  `next_earnings_eps_estimate`, `next_earnings_revenue_estimate`.
+- **Insiders**: `insider_sentiment`, `insider_signal` (0–1),
+  `insider_net_usd` (+ buying, − selling). Sentiment and signal are empty
+  and the value 0 when the site has nothing to report.
+- **Hedge funds**: `hedge_fund_sentiment`, `hedge_fund_signal`,
+  `hedge_fund_net_shares` (net change in shares held).
+- **TipRanks retail investors**: `investor_sentiment`, `investor_signal`,
+  `investor_change_7d`, `investor_change_30d` (change in the share of
+  portfolios holding it).
+- **News**: `news_sentiment`, `news_sentiment_score`,
+  `news_bullish_ratio`, `news_articles_last_week`,
+  `news_articles_weekly_average`.
+- **Bloggers**: `blogger_sentiment`, `blogger_bullish_ratio`,
+  `blogger_opinion_count`.
+
+Sentiment values are the site's own ids: `veryNegative`, `negative`,
+`neutral`, `positive`, `veryPositive`. Fractions are fractions (0.025 =
+2.5%), dates are the site's ISO strings. The payload does not state the
+period behind the insider and hedge fund figures; they are the numbers
+the site's own cards show. On the S&P 500 (2026-10-20): dividends 414 of
+503, earnings dates 502, hedge funds 502, insiders 268, news sentiment
+491, bloggers 503.
+
 Any of the consensus/count/price-target fields can be `None` — some
 tickers carry a price target with no buy/hold/sell breakdown at all, and
 some (confirmed live: GME) carry no analyst data at all — a real,
@@ -298,9 +334,9 @@ list and the live-testing checklist.
   another with no pause. Every run: 503 of 503, exit 0, no 403/429,
   125–165 s each. Running several engines or machines in parallel was
   not tested.
-- Only the ticker forecast page. No screener/stock-list pages, no
-  insider-trading pages, no hedge fund activity pages — all real
-  sections of the same site, out of scope here.
+- Only the ticker forecast page. No screener/stock-list pages, and no
+  per-transaction insider or hedge fund lists: only the summaries the
+  ticker's own payload carries (above).
 - `enumId` 1 (presumably `"strongSell"`) was never observed live; the
   parser never hardcodes a guess for it — it reads the site's own label
   string directly instead of a private lookup table.

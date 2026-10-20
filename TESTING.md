@@ -63,6 +63,11 @@ works against tipranks.com right now."
   anything else to `remote_api_error`. The relaunch itself needs a
   browser and was checked live: local `pproxy` relays (one with
   `--auth 0` and a password) behind two dead `127.0.0.1` ports.
+- Dividends, earnings and activity/sentiment columns: every value from
+  a live KO capture (`tipranks_ko_extras.json`, everything present,
+  including a declared next dividend), and None, not invented, for TSLA
+  (`tipranks_tsla_no_dividend.json`, no dividend, no insider activity)
+  and for a record with none of those blocks.
 - `--tickers-file` skips blank lines and `#` comments (whole-line and
   trailing) in all three engines, and a comments-only file is bad usage.
 - pyppeteer's `installed_chrome()` returns a Chrome/Chromium only on

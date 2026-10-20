@@ -1,0 +1,249 @@
+{
+  "_meta": {
+    "take": 31,
+    "app": "backend",
+    "v": 2,
+    "time": "2026-10-20T12:12:33.869Z"
+  },
+  "models": {
+    "stocks": [
+      {
+        "_id": "KO",
+        "analystRatings": {
+          "all": {
+            "buy": 15,
+            "hold": 2,
+            "sell": 0,
+            "total": 17,
+            "id": "strongBuy",
+            "enumId": 5,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 97.375,
+              "upside": 0.04233568828944552
+            },
+            "highPriceTarget": 104,
+            "lowPriceTarget": 86
+          },
+          "best": {
+            "buy": 8,
+            "hold": 1,
+            "sell": 0,
+            "total": 9,
+            "id": "strongBuy",
+            "enumId": 5,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 95.125,
+              "upside": 0.01825090986940698
+            },
+            "highPriceTarget": 100,
+            "lowPriceTarget": 86
+          },
+          "lastRating": {
+            "date": "2026-10-19T00:00:00.000Z"
+          },
+          "threeDaysConsensus": {
+            "buy": 2,
+            "hold": 0,
+            "sell": 0,
+            "total": 2,
+            "id": "moderateBuy",
+            "enumId": 4,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 97,
+              "upside": 0.038321558552772424
+            },
+            "highPriceTarget": 104,
+            "lowPriceTarget": 90
+          },
+          "sevenDaysConsensus": {
+            "buy": 4,
+            "hold": 1,
+            "sell": 0,
+            "total": 5,
+            "id": "strongBuy",
+            "enumId": 5,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 97.4,
+              "upside": 0.04260329693855706
+            },
+            "highPriceTarget": 104,
+            "lowPriceTarget": 90
+          },
+          "thirtyDaysConsensus": {
+            "buy": 11,
+            "hold": 2,
+            "sell": 0,
+            "total": 13,
+            "id": "strongBuy",
+            "enumId": 5,
+            "currency": "USD",
+            "priceTarget": {
+              "value": 97.53846153846153,
+              "upside": 0.04408543714902055
+            },
+            "highPriceTarget": 104,
+            "lowPriceTarget": 86
+          }
+        },
+        "company": {
+          "name": "Coca-Cola"
+        },
+        "smartScore": {
+          "update": "2026-10-20T00:00:00.000Z",
+          "value": 9
+        },
+        "dividend": {
+          "amount": 0.53,
+          "latestDividendAmount": 0.51,
+          "payoutRatio": 0.9203539823008849,
+          "ttmDividendAmount": 1.988,
+          "yield": 0.025288777094224925,
+          "annualizedPayout": 2.1,
+          "currency": "USD",
+          "executionDate": "2026-09-15T00:00:00.000Z",
+          "growthSince": "2009-03-11T00:00:00.000Z",
+          "payDate": "2026-10-01T00:00:00.000Z",
+          "recordDate": "2026-09-15T00:00:00.000Z",
+          "payoutInterval": "quarterly",
+          "frequency": "Quarterly",
+          "yieldForward": 0.029901600822440887,
+          "declarationDate": "2026-07-15T00:00:00.000Z"
+        },
+        "lastDividend": {
+          "currency": "USD",
+          "amount": 0.53,
+          "declarationDate": "2026-07-15T00:00:00.000Z",
+          "payDate": "2026-10-01T00:00:00.000Z",
+          "recordDate": "2026-09-15T00:00:00.000Z",
+          "executionDate": "2026-09-15T00:00:00.000Z",
+          "annualizedPayout": 2.1,
+          "growthSince": "2009-03-11T00:00:00.000Z",
+          "isSpecialDividend": false,
+          "payoutInterval": "quarterly",
+          "payoutIntervalEnumId": 4,
+          "yield": 0.022479087411689146,
+          "payoutRatio": 0.6327
+        },
+        "nextDividend": {
+          "currency": "USD",
+          "amount": 0.53,
+          "declarationDate": "2026-10-15T00:00:00.000Z",
+          "payDate": "2026-12-15T00:00:00.000Z",
+          "recordDate": "2026-12-01T00:00:00.000Z",
+          "executionDate": "2026-12-01T00:00:00.000Z",
+          "annualizedPayout": 2.12,
+          "growthSince": "2009-03-11T00:00:00.000Z",
+          "isSpecialDividend": false,
+          "payoutInterval": "quarterly",
+          "payoutIntervalEnumId": 4,
+          "yield": 0.022479087411689146,
+          "payoutRatio": 0.6327
+        },
+        "lastEarning": {
+          "fiscalPeriod": 2,
+          "fiscalQuarterEnding": "2026-06-30T00:00:00.000Z",
+          "fiscalYear": 2026,
+          "lastYearValue": 0.87,
+          "nextPeriodEnding": null,
+          "periodEnding": "2026-06-30T00:00:00.000Z",
+          "reportOnTimeOfDay": "PreMarket",
+          "reported": "2026-07-28T00:00:00.000Z",
+          "reportedEPS": 0.97,
+          "salesEstimate": 13170957000,
+          "salesHighEstimate": 13695000000,
+          "salesLowEstimate": 12998000000,
+          "value": 0.932,
+          "epsLowEstimate": 0.904,
+          "epsHighEstimate": 0.95,
+          "totalRevenue": 13469000000,
+          "totalIncome": 4425000000,
+          "enterpriseValue": 392232.82,
+          "enterpriseValueCurrencyID": 1
+        },
+        "nextEarning": {
+          "fiscalPeriod": 3,
+          "fiscalQuarterEnding": "2026-09-30T00:00:00.000Z",
+          "fiscalYear": 2026,
+          "lastYearValue": 0.82,
+          "nextPeriodEnding": null,
+          "periodEnding": "2026-09-30T00:00:00.000Z",
+          "reportOnTimeOfDay": "PreMarket",
+          "reported": "2026-10-27T00:00:00.000Z",
+          "reportedEPS": null,
+          "salesEstimate": 12919928000,
+          "salesHighEstimate": 13031000000,
+          "salesLowEstimate": 12732387000,
+          "value": 0.881,
+          "epsLowEstimate": 0.85,
+          "epsHighEstimate": 0.89,
+          "totalRevenue": null,
+          "totalIncome": null,
+          "enterpriseValue": null,
+          "enterpriseValueCurrencyID": null,
+          "epsEstimateFY": 3.307345,
+          "revenueEstimateFY": 49801413095,
+          "peEstimateFY": 28.246221667228546,
+          "psEstimateFY": 8.070938780055513
+        },
+        "insiderActivity": {
+          "signal": 0.0342,
+          "sentiment": "veryNegative",
+          "trend": null,
+          "currency": "USD",
+          "shareTrend": -33647685.230000004
+        },
+        "hedgeFundActivity": {
+          "signal": 0.6912,
+          "sentiment": "positive",
+          "trend": 3632264,
+          "currency": null,
+          "shareTrend": null
+        },
+        "investorActivity": {
+          "all": {
+            "score": 0.4073,
+            "sentiment": "positive",
+            "avg": 0.019135482671130064,
+            "change": {
+              "days30": 0.004552737348279857,
+              "days7": 0.006543590436598801
+            },
+            "holding": 45536,
+            "percentAllocated": 0.051662
+          }
+        },
+        "newsSentiment": {
+          "buzz": {
+            "value": 1.4285714285714284,
+            "lastWeek": 55,
+            "positive": {
+              "articlesInLastWeek": 55,
+              "buzz": 1.4285714285714284,
+              "weeklyAverage": 37
+            },
+            "weeklyAvg": 37
+          },
+          "negative": 0,
+          "positive": 1,
+          "score": 1,
+          "sentiment": "veryPositive"
+        },
+        "bloggerOpinions": {
+          "consensus": {
+            "ratioPositive": 0.8142857142857143,
+            "signal": "positive",
+            "signalEnumId": 1,
+            "negative": 4,
+            "neutral": 9,
+            "positive": 57,
+            "total": 70
+          }
+        }
+      }
+    ]
+  }
+}

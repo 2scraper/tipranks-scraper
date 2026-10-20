@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
+### Added
+
+- 35 new columns from the same `payload.json`, appended after the existing ones so CSV column positions do not move: the latest and next declared dividend (amount, ex-date, pay date, frequency, annualized payout, yield, payout ratio), last and next earnings (date, EPS, EPS estimate, time of day, revenue estimate), insider, hedge fund and TipRanks retail-investor activity (sentiment, 0-1 signal, net value / shares / portfolio change), and news and blogger sentiment. See README → "What it reads". Live on 2026-10-20 over the S&P 500: dividends for 414 of 503, earnings dates 502, hedge funds 502, insiders 268, news sentiment 491, bloggers 503; Selenium and pyppeteer gave the same values as Playwright.
+- `sample_output.json` / `.csv` re-captured live (AAPL) with the new columns.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added
@@ -364,7 +371,8 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.0...v0.4.1

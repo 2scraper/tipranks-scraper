@@ -8,7 +8,10 @@ Scope (deliberately narrow): a single stock's ticker page —
 `https://www.tipranks.com/stocks/{ticker}/stock-analysis` — and nothing
 else. No screener/stock-list pages, no insider-trading pages, no hedge
 fund activity pages; those are real sections of the same site but are out
-of scope for this repo.
+of scope for this repo. The ticker's own payload does carry summaries of
+dividends, earnings, insider / hedge fund / retail-investor activity and
+news / blogger sentiment, and those are read (see "Beyond the analyst
+consensus" below); the per-transaction lists behind them are not.
 
 CONFIRMED, from a real captured session:
 
@@ -145,6 +148,35 @@ CONFIRMED, from a real captured session:
   real current data; it does not by itself confirm any of the three
   browser-engine scripts, which still need their own live run with an
   actual installed driver.
+
+Beyond the analyst consensus, CONFIRMED live on 2026-10-20 (AAPL, TSLA,
+NVDA, KO, GME, BRK.B, LUV, AMZN), all on the ticker's own record:
+
+- `lastDividend` / `nextDividend`: `amount`, `executionDate` (ex-date),
+  `payDate`, `payoutInterval`, `annualizedPayout`; `dividend.yield` and
+  `dividend.payoutRatio`. Absent (null) for non-payers (TSLA, AMZN,
+  BRK.B); `nextDividend` is usually null, set once declared (KO). A
+  suspended payer keeps its last dividend (GME: 2019) with a null yield,
+  so `dividend_ex_date` is what tells a current payer apart.
+- `lastEarning` / `nextEarning`: `reported` (the report date),
+  `reportedEPS` (null until reported), `value` (consensus EPS estimate),
+  `reportOnTimeOfDay` ("PreMarket", "AfterHours" or "Unknown"),
+  `salesEstimate`.
+- `insiderActivity`: `sentiment`, `signal` (0-1) and `shareTrend`, a
+  signed USD value of insider buying (+) or selling (-). All null, with
+  `shareTrend` 0, when there is nothing to report (AAPL, TSLA).
+- `hedgeFundActivity`: `sentiment`, `signal` (0-1) and `trend`, the net
+  change in shares held (signed).
+- `investorActivity.all`: TipRanks' retail-portfolio `sentiment`,
+  `score` (0-1) and `change.days7` / `change.days30` (change in the share
+  of portfolios holding it, a fraction).
+- `newsSentiment`: `sentiment`, `score` (0-1), `positive` (bullish share
+  of articles), `buzz.lastWeek` (articles last week), `buzz.weeklyAvg`.
+- `bloggerOpinions.consensus`: `signal`, `ratioPositive`, `total`.
+- Every `sentiment` / `signal` label seen: "veryNegative", "negative",
+  "neutral", "positive", "veryPositive". Passed through verbatim.
+- The periods behind the insider and hedge fund figures are not stated
+  in the payload; they are the numbers the site's own cards show.
 
 NOT confirmed / explicitly out of scope:
 
@@ -367,6 +399,48 @@ class TickerRating:
     current_price_asof: Optional[str] = None
     current_price_source: Optional[str] = None  # "open"/"pre" (a quotes.<key>), "daily" or "daily_history"
 
+    # Everything below is appended after the original columns so an
+    # existing CSV consumer's column positions stay put. Dates are the
+    # site's own ISO strings; sentiment labels its own ids (module
+    # docstring, "Beyond the analyst consensus").
+    dividend_amount: Optional[float] = None  # the latest declared dividend, per payment
+    dividend_ex_date: Optional[str] = None
+    dividend_pay_date: Optional[str] = None
+    dividend_frequency: Optional[str] = None  # e.g. "quarterly"
+    dividend_annualized_payout: Optional[float] = None
+    dividend_yield: Optional[float] = None  # fraction
+    dividend_payout_ratio: Optional[float] = None  # fraction
+    next_dividend_amount: Optional[float] = None  # only once declared
+    next_dividend_ex_date: Optional[str] = None
+    next_dividend_pay_date: Optional[str] = None
+
+    last_earnings_date: Optional[str] = None
+    last_earnings_eps: Optional[float] = None
+    last_earnings_eps_estimate: Optional[float] = None
+    next_earnings_date: Optional[str] = None
+    next_earnings_time: Optional[str] = None  # "PreMarket", "AfterHours" or "Unknown"
+    next_earnings_eps_estimate: Optional[float] = None
+    next_earnings_revenue_estimate: Optional[float] = None
+
+    insider_sentiment: Optional[str] = None
+    insider_signal: Optional[float] = None  # 0-1
+    insider_net_usd: Optional[float] = None  # + buying, - selling
+    hedge_fund_sentiment: Optional[str] = None
+    hedge_fund_signal: Optional[float] = None  # 0-1
+    hedge_fund_net_shares: Optional[float] = None  # net change in shares held
+    investor_sentiment: Optional[str] = None  # TipRanks retail portfolios
+    investor_signal: Optional[float] = None  # 0-1
+    investor_change_7d: Optional[float] = None  # change in share of portfolios holding it
+    investor_change_30d: Optional[float] = None
+    news_sentiment: Optional[str] = None
+    news_sentiment_score: Optional[float] = None  # 0-1
+    news_bullish_ratio: Optional[float] = None  # fraction of articles
+    news_articles_last_week: Optional[int] = None
+    news_articles_weekly_average: Optional[float] = None
+    blogger_sentiment: Optional[str] = None
+    blogger_bullish_ratio: Optional[float] = None
+    blogger_opinion_count: Optional[int] = None
+
 
 def _extract_scope(scope: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     scope = scope if isinstance(scope, dict) else {}
@@ -383,6 +457,65 @@ def _extract_scope(scope: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "price_target_upside": pt.get("upside"),
         "price_target_high": scope.get("highPriceTarget"),
         "price_target_low": scope.get("lowPriceTarget"),
+    }
+
+
+def _dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _extract_extras(record: Dict[str, Any]) -> Dict[str, Any]:
+    """The dividend / earnings / activity / sentiment columns of
+    TickerRating, from the ticker's own record. A missing or null block
+    leaves its columns None."""
+    dividend = _dict(record.get("dividend"))
+    last_div = _dict(record.get("lastDividend")) or dividend
+    next_div = _dict(record.get("nextDividend"))
+    last_earn = _dict(record.get("lastEarning"))
+    next_earn = _dict(record.get("nextEarning"))
+    insider = _dict(record.get("insiderActivity"))
+    hedge = _dict(record.get("hedgeFundActivity"))
+    investor = _dict(_dict(record.get("investorActivity")).get("all"))
+    investor_change = _dict(investor.get("change"))
+    news = _dict(record.get("newsSentiment"))
+    buzz = _dict(news.get("buzz"))
+    blogger = _dict(_dict(record.get("bloggerOpinions")).get("consensus"))
+    return {
+        "dividend_amount": last_div.get("amount"),
+        "dividend_ex_date": last_div.get("executionDate"),
+        "dividend_pay_date": last_div.get("payDate"),
+        "dividend_frequency": last_div.get("payoutInterval"),
+        "dividend_annualized_payout": last_div.get("annualizedPayout"),
+        "dividend_yield": dividend.get("yield"),
+        "dividend_payout_ratio": dividend.get("payoutRatio"),
+        "next_dividend_amount": next_div.get("amount"),
+        "next_dividend_ex_date": next_div.get("executionDate"),
+        "next_dividend_pay_date": next_div.get("payDate"),
+        "last_earnings_date": last_earn.get("reported"),
+        "last_earnings_eps": last_earn.get("reportedEPS"),
+        "last_earnings_eps_estimate": last_earn.get("value"),
+        "next_earnings_date": next_earn.get("reported"),
+        "next_earnings_time": next_earn.get("reportOnTimeOfDay"),
+        "next_earnings_eps_estimate": next_earn.get("value"),
+        "next_earnings_revenue_estimate": next_earn.get("salesEstimate"),
+        "insider_sentiment": insider.get("sentiment"),
+        "insider_signal": insider.get("signal"),
+        "insider_net_usd": insider.get("shareTrend"),
+        "hedge_fund_sentiment": hedge.get("sentiment"),
+        "hedge_fund_signal": hedge.get("signal"),
+        "hedge_fund_net_shares": hedge.get("trend"),
+        "investor_sentiment": investor.get("sentiment"),
+        "investor_signal": investor.get("score"),
+        "investor_change_7d": investor_change.get("days7"),
+        "investor_change_30d": investor_change.get("days30"),
+        "news_sentiment": news.get("sentiment"),
+        "news_sentiment_score": news.get("score"),
+        "news_bullish_ratio": news.get("positive"),
+        "news_articles_last_week": buzz.get("lastWeek"),
+        "news_articles_weekly_average": buzz.get("weeklyAvg"),
+        "blogger_sentiment": blogger.get("signal"),
+        "blogger_bullish_ratio": blogger.get("ratioPositive"),
+        "blogger_opinion_count": blogger.get("total"),
     }
 
 
@@ -528,4 +661,5 @@ def parse_payload(
         current_price=current_price,
         current_price_asof=current_price_asof,
         current_price_source=current_price_source,
+        **_extract_extras(record),
     )
