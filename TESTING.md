@@ -52,6 +52,12 @@ works against tipranks.com right now."
   installed, and reject bad usage (no tickers, a robots.txt-disallowed
   path, an unreadable `--tickers-file`) identically, before any network
   call.
+- `--tickers-file` skips blank lines and `#` comments (whole-line and
+  trailing) in all three engines, and a comments-only file is bad usage.
+- pyppeteer's `installed_chrome()` returns a Chrome/Chromium only on
+  Apple Silicon macOS (faked `sys.platform`/`platform.machine()` and a
+  temporary app folder), and `main()` hands it to `run()` unless
+  `--executable-path` or `--cdp-endpoint` is given.
 - The credential scanner (`.github/ci_checks.py`) passes, and the
   Dockerfile (when present) strips the test suite and never `COPY`s a
   `.env`; the pyproject-version/CHANGELOG consistency check likewise —

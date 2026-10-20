@@ -421,6 +421,80 @@ def _():
         assert mod.parse_args(["--ticker", "AAPL"]).executable_path is None, mod.__name__
 
 
+@check("every engine's --tickers-file skips blank lines and # comments, like --proxy-file")
+def _():
+    import output_writer as ow
+
+    seen = {}
+
+    def fake_run(tickers, **kwargs):
+        seen["tickers"] = list(tickers)
+        return [], list(tickers), [], [], []
+
+    for mod in ENGINE_MODULES:
+        original = mod.run
+        mod.run = fake_run
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "tickers.txt"
+                path.write_text("# watchlist\n\nAAPL\n  # indented comment\nmsft  # Microsoft\nAAPL\n", encoding="utf-8")
+                code = mod.main(["--tickers-file", str(path), "--out", str(Path(tmp) / "o.json")])
+                assert seen["tickers"] == ["AAPL", "MSFT"], f"{mod.__name__}: {seen['tickers']}"
+                assert code == ow.EXIT_ZERO_PRODUCTS, f"{mod.__name__}: got {code}"
+
+                path.write_text("# only comments\n\n", encoding="utf-8")
+                assert mod.main(["--tickers-file", str(path)]) == ow.EXIT_BAD_USAGE, mod.__name__
+        finally:
+            mod.run = original
+
+
+@check("puppeteer finds an installed Chrome only on Apple Silicon macOS (its bundled Chromium "
+       "segfaults there), and main() uses it unless --executable-path or --cdp-endpoint is given")
+def _():
+    from types import SimpleNamespace
+
+    mod = puppeteer_scraper
+    original_sys, original_platform, original_run = mod.sys, mod.platform, mod.run
+    original_find = mod.installed_chrome
+    seen = {}
+
+    def fake_run(tickers, **kwargs):
+        seen["executable_path"] = kwargs.get("executable_path")
+        return [], list(tickers), [], [], []
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            chrome = Path(tmp) / "Google Chrome.app/Contents/MacOS/Google Chrome"
+            chrome.parent.mkdir(parents=True)
+            chrome.write_text("", encoding="utf-8")
+            chrome.chmod(0o755)
+
+            mod.sys = SimpleNamespace(platform="darwin")
+            mod.platform = SimpleNamespace(machine=lambda: "arm64")
+            assert mod.installed_chrome((tmp,)) == str(chrome)
+            empty = str(Path(tmp) / "nothing-here")
+            assert mod.installed_chrome((empty,)) is None
+            mod.platform = SimpleNamespace(machine=lambda: "x86_64")
+            assert mod.installed_chrome((tmp,)) is None
+            mod.sys = SimpleNamespace(platform="linux")
+            mod.platform = SimpleNamespace(machine=lambda: "arm64")
+            assert mod.installed_chrome((tmp,)) is None
+            mod.sys = original_sys
+
+            mod.installed_chrome = lambda: "/found/chrome"
+            mod.run = fake_run
+            out = str(Path(tmp) / "o.json")
+            mod.main(["--ticker", "AAPL", "--out", out])
+            assert seen["executable_path"] == "/found/chrome", seen
+            mod.main(["--ticker", "AAPL", "--out", out, "--executable-path", "/my/chrome"])
+            assert seen["executable_path"] == "/my/chrome", seen
+            mod.main(["--ticker", "AAPL", "--out", out, "--cdp-endpoint", "ws://127.0.0.1:9/x"])
+            assert seen["executable_path"] is None, seen
+    finally:
+        mod.sys, mod.platform, mod.run = original_sys, original_platform, original_run
+        mod.installed_chrome = original_find
+
+
 @check("a total run failure (every ticker fails, none complete) is EXIT_REMOTE_API_ERROR, "
        "not EXIT_ZERO_PRODUCTS — a regression found live: all three engines were passing "
        "remote_api_error=False unconditionally, so a network outage looked identical to "

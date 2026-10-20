@@ -82,7 +82,7 @@ Flags, identical across all three:
 | Flag | Meaning |
 |---|---|
 | `--ticker SYM` | A ticker to scrape. Repeatable. |
-| `--tickers-file PATH` | One ticker per line, instead of repeating `--ticker`. |
+| `--tickers-file PATH` | One ticker per line, instead of repeating `--ticker`. Blank lines and `#` comments (whole-line or after a ticker) are skipped, as in `--proxy-file`. |
 | `--format json\|csv` | Output format. Default `json`. |
 | `--out PATH` | Output file path. Default `tipranks_results.json`. |
 | `--allow-empty` | Write output even if every requested ticker came back empty. |
@@ -256,10 +256,13 @@ trying the runner's own IP and reports the expected refusal as a notice.
   launches but then segfaults on an actual headless run. Playwright's and
   Selenium's own browser/driver downloads were unaffected on the same
   machine, so this is specific to that one pinned build, not this site or
-  this repo's code. Fix: `--executable-path /path/to/Chrome` to use an
-  already-installed, working Chrome/Chromium instead (all three engines
-  accept this flag, for CLI parity, though only Puppeteer has needed it
-  so far).
+  this repo's code. On Apple Silicon the engine now finds Google Chrome
+  or Chromium in `/Applications` or `~/Applications` and uses it on its
+  own (logged at INFO). The bundled build is still tried when neither is
+  installed, and on every other platform, including the Docker image.
+  `--executable-path /path/to/Chrome` overrides the search (all three
+  engines accept this flag, for CLI parity, though only Puppeteer has
+  needed it so far).
 
 ## Testing
 
