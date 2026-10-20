@@ -180,6 +180,14 @@ class ProxyPool:
         self._cursor += 1
         return p
 
+    def peek(self) -> Optional[Proxy]:
+        """What `next()` would return, without moving the cursor. Used by
+        the proxy pre-check, so checking an exit does not skip it."""
+        live = self._live_proxies()
+        if not live:
+            return None
+        return live[self._cursor % len(live)]
+
     def report_failure(self, proxy: Proxy, dead: bool) -> None:
         """`dead=True` for a PROXY_DEAD_MARKERS error (kills the exit after
         `block_retries` in a row); `dead=False` (a timeout / non-proxy

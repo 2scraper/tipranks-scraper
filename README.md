@@ -191,6 +191,36 @@ Verified live on 2026-10-20 on all three engines: two dead proxies then a
 working one gave exit 0, including a switch to a password-protected
 proxy on Playwright and pyppeteer.
 
+**Proxy traffic savers.** A proxy is billed by traffic, so a run through
+`--proxy` / `--proxy-file` / `TIPRANKS_PROXY` does two things to avoid
+paying for bytes it does not use:
+
+- **One pre-check before any browser starts**: a CONNECT through the
+  proxy and a `HEAD /robots.txt` on www.tipranks.com, on the proxy the run
+  is about to use. Chromium reports a proxy's HTTP 407 as a navigation
+  timeout, so a wrong or exhausted credential used to look like a site
+  failure. Now a **407** (the gateway refused the credential, or the
+  traffic balance is exhausted) or a **402** (proxy traffic/balance
+  exhausted) ends the run in seconds with **exit 5** and
+  `<out>.latest_attempt.meta.json` saying `status: failed`,
+  `stop_reason: proxy_auth_failed` (or `proxy_balance_exhausted`). Any
+  previous output and its `.meta.json` stay as they were. The message
+  names `TIPRANKS_PROXY` and prints neither the login nor the password. A
+  proxy that does not answer at all keeps the behaviour above (the browser
+  makes its own attempt). No pre-check runs without a proxy or with
+  `--cdp-endpoint`, which uses its own exit instead of the proxy.
+- **Images, video/audio and web fonts are not downloaded** through a local
+  proxy: Playwright aborts them by resource type, pyppeteer through CDP's
+  Fetch domain, Selenium by file extension with CDP
+  `Network.setBlockedURLs`. The data comes from `payload.json` alone. Measured
+  2026-10-20 (AAPL and MSFT, no proxy, blocking forced on vs off): the
+  same 2 rows and identical values in every column except `scraped_at`.
+  Since the engines open `payload.json` directly, a normal run requests
+  almost no media in the first place, and this mostly guards against a
+  future change of route. `--load-media` (or `TIPRANKS_LOAD_MEDIA=1`)
+  loads them. Without a proxy, or over `--cdp-endpoint`, nothing is
+  blocked.
+
 Credentials belong in `.env` / `TIPRANKS_PROXY` / `TIPRANKS_CDP_ENDPOINT`
 / `TWOCAPTCHA_KEY` — never as literal `--proxy`/`--cdp-endpoint`/
 `--twocaptcha-key` text on a shared or logged command line if you can
@@ -207,7 +237,7 @@ Same exit codes across all three engines:
 | 2 | bad usage (no tickers given, robots.txt disallows a path, ...) |
 | 3 | blocked (a real 403/429, or the confirmed Cloudflare interstitial's own body/URL markers — see below) |
 | 4 | zero results (every ticker answered "not found") |
-| 5 | no rows obtained: navigation/network failure, or a served payload the parser could not read (status `parser_failed`) |
+| 5 | no rows obtained: navigation/network failure, a proxy that refused the credential or the balance before the run began (`stop_reason: proxy_auth_failed` / `proxy_balance_exhausted` in `<out>.latest_attempt.meta.json`), or a served payload the parser could not read (status `parser_failed`) |
 | 6 | partial (some tickers failed, others succeeded) |
 
 A run where every requested ticker fails and none complete is `5`

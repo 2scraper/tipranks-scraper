@@ -75,6 +75,8 @@ ENV_KEYS: Dict[str, str] = {
     "TWOCAPTCHA_KEY": "twocaptcha_key",
     "TIPRANKS_PROXY": "proxy",
     "TIPRANKS_CDP_ENDPOINT": "cdp_endpoint",
+    # "1" keeps images/video/fonts loading through a proxy (--load-media).
+    "TIPRANKS_LOAD_MEDIA": "load_media",
 }
 
 _PLACEHOLDER_RE = re.compile(r"^\s*$")

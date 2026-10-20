@@ -1752,6 +1752,368 @@ def _():
         assert driver.visited == [ticker_payload_url("AAPL")], driver.visited
 
 
+# --------------------------------------------------------------------------- #
+# Proxy traffic savers: the pre-check before any browser, media blocking
+# through a local proxy (proxy_check.py)
+# --------------------------------------------------------------------------- #
+import argparse as _argparse  # noqa: E402
+import asyncio as _sv_asyncio  # noqa: E402
+import contextlib as _contextlib  # noqa: E402
+import io as _io  # noqa: E402
+import logging as _logging  # noqa: E402
+import socket as _socket  # noqa: E402
+import threading as _threading  # noqa: E402
+from unittest import mock as _mock  # noqa: E402
+
+import proxy_check  # noqa: E402
+
+_SV_SECRET = "s3cret-Pw-not-real"
+_SV_LOGIN = "user-zone-x"
+
+
+class _StubProxy:
+    """A one-port HTTP proxy on 127.0.0.1 that answers every request with a
+    fixed status and records the request heads it received."""
+
+    def __init__(self, status):
+        self.status, self.heads = status, []
+        self.sock = _socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(8)
+        self.port = self.sock.getsockname()[1]
+        _threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            with conn:
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                self.heads.append(data.decode("latin-1"))
+                reason = {407: "Proxy Authentication Required",
+                          402: "Payment Required", 200: "OK"}.get(self.status, "X")
+                conn.sendall(f"HTTP/1.1 {self.status} {reason}\r\n"
+                             "Content-Length: 0\r\nConnection: close\r\n\r\n".encode())
+
+    def url(self):
+        # Concatenated, so no line here looks like a credentialled URL.
+        return "http://" + _SV_LOGIN + ":" + _SV_SECRET + "@127.0.0.1:" + str(self.port)
+
+    def proxy(self):
+        return _proxy_pool.parse_proxy_line(self.url())
+
+    def close(self):
+        self.sock.close()
+
+
+def _closed_port():
+    s = _socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+@_contextlib.contextmanager
+def _captured():
+    """stdout, stderr and every log record, as one string."""
+    buf = _io.StringIO()
+    handler = _logging.StreamHandler(buf)
+    root = _logging.getLogger()
+    root.addHandler(handler)
+    try:
+        with _contextlib.redirect_stdout(buf), _contextlib.redirect_stderr(buf):
+            yield buf
+    finally:
+        root.removeHandler(handler)
+
+
+@check("proxy pre-check: a 407 is auth_failed and fatal, sent as ONE CONNECT to the target host "
+       "with the credential; the message names TIPRANKS_PROXY and never prints the login or password")
+def _():
+    stub = _StubProxy(407)
+    try:
+        res = proxy_check.precheck(stub.proxy(), "https://www.tipranks.com", timeout=5)
+        assert res.outcome == "auth_failed" and res.fatal, res
+        assert res.stop_reason == "proxy_auth_failed", res.stop_reason
+        assert len(stub.heads) == 1, stub.heads
+        head = stub.heads[0]
+        assert head.startswith("CONNECT www.tipranks.com:443 "), head[:60]
+        assert "Proxy-Authorization: Basic " in head
+        pool = _proxy_pool.ProxyPool([stub.proxy()])
+        with _captured() as buf:
+            gated = proxy_check.gate(pool, "https://www.tipranks.com", timeout=5)
+        text = buf.getvalue()
+        assert gated is not None and gated.fatal
+        assert "TIPRANKS_PROXY" in text and "refused the credential" in text, text
+        assert "traffic balance is exhausted" in text, text
+        assert _SV_SECRET not in text and _SV_LOGIN not in text, text
+        assert pool.next() is pool._proxies[0], "the pre-check must not move the pool's cursor"
+    finally:
+        stub.close()
+
+
+@check("proxy pre-check: a 402 is balance_exhausted and fatal, 'traffic/balance exhausted', no credential")
+def _():
+    stub = _StubProxy(402)
+    try:
+        res = proxy_check.precheck(stub.proxy(), "https://www.tipranks.com", timeout=5)
+        msg = proxy_check.failure_message(res, stub.proxy())
+        assert res.outcome == "balance_exhausted" and res.fatal, res
+        assert res.stop_reason == "proxy_balance_exhausted"
+        assert "traffic/balance exhausted" in msg and _SV_SECRET not in msg and _SV_LOGIN not in msg, msg
+    finally:
+        stub.close()
+
+
+@check("proxy pre-check: a plain-http target is one HEAD for its robots.txt; a proxy that does not "
+       "answer is a transport error and NOT fatal; no pool or socks5 means no check")
+def _():
+    stub = _StubProxy(200)
+    try:
+        res = proxy_check.precheck(stub.proxy(), "http://127.0.0.1:9/x", timeout=5)
+        assert res.outcome == "ok" and not res.fatal, res
+        assert stub.heads[-1].startswith("HEAD http://127.0.0.1:9/robots.txt "), stub.heads
+    finally:
+        stub.close()
+    dead = _proxy_pool.Proxy("127.0.0.1", _closed_port(), _SV_LOGIN, _SV_SECRET)
+    res = proxy_check.precheck(dead, "https://www.tipranks.com", timeout=5)
+    assert res.outcome == "transport_error" and not res.fatal, res
+    with _captured() as buf:
+        assert proxy_check.gate(_proxy_pool.ProxyPool([dead]), "https://www.tipranks.com", timeout=5) is None
+    assert _SV_SECRET not in buf.getvalue() and _SV_LOGIN not in buf.getvalue()
+    assert proxy_check.gate(None, "https://www.tipranks.com") is None
+    socks = _proxy_pool.Proxy("127.0.0.1", 1, scheme="socks5")
+    assert proxy_check.precheck(socks, "https://www.tipranks.com").outcome == "skipped"
+
+
+@check("proxy pre-check: every engine exits 5 on a 407 WITHOUT starting a browser, writes "
+       "<out>.latest_attempt.meta.json (failed / proxy_auth_failed), leaves earlier output alone, "
+       "and never logs the credential")
+def _():
+    for mod in ENGINE_MODULES:
+        stub = _StubProxy(407)
+        launched = []
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = os.path.join(tmp, "out.json")
+                Path(out).write_text("[1]")
+                Path(out + ".meta.json").write_text("{}")
+                with _mock.patch.object(mod, "run", side_effect=lambda *a, **k: launched.append(1)), \
+                        _captured() as buf:
+                    try:
+                        rc = mod.main(["--ticker", "AAPL", "--proxy", stub.url(), "--out", out])
+                    except Exception as exc:  # noqa: BLE001 — fail BY NAME
+                        rc = f"raised {type(exc).__name__}"
+                side = out + ".latest_attempt.meta.json"
+                meta = json.loads(Path(side).read_text()) if os.path.exists(side) else {}
+                untouched = Path(out).read_text() == "[1]" and Path(out + ".meta.json").read_text() == "{}"
+        finally:
+            stub.close()
+        assert rc == 5 and not launched, f"{mod.__name__}: rc={rc}, browser started={bool(launched)}"
+        assert meta.get("status") == "failed" and meta.get("stop_reason") == "proxy_auth_failed", (mod.__name__, meta)
+        assert meta.get("rating_count") == 0 and meta.get("tickers_requested") == ["AAPL"], meta
+        assert untouched, f"{mod.__name__}: the previous output or its .meta.json was overwritten"
+        assert _SV_SECRET not in buf.getvalue() and _SV_LOGIN not in buf.getvalue(), mod.__name__
+
+
+@check("proxy pre-check: not run over --cdp-endpoint (the local proxy is not used there)")
+def _():
+    for mod in ENGINE_MODULES:
+        with tempfile.TemporaryDirectory() as tmp, \
+                _mock.patch.object(proxy_check, "gate") as gate, \
+                _mock.patch.object(mod, "run", return_value=([], [], ["AAPL"], [], [])), \
+                _captured():
+            mod.main(["--ticker", "AAPL", "--proxy", "http://127.0.0.1:1",
+                      "--cdp-endpoint", "ws://127.0.0.1:9222", "--out", os.path.join(tmp, "o.json")])
+        assert not gate.called, mod.__name__
+
+
+def _block_media_passed(mod, *argv, env=None):
+    seen = {}
+
+    def fake_run(*a, **k):
+        seen.update(k)
+        return [], [], ["AAPL"], [], []
+    with tempfile.TemporaryDirectory() as tmp, \
+            _mock.patch.object(mod, "run", side_effect=fake_run), \
+            _mock.patch.object(proxy_check, "gate", return_value=None), \
+            _mock.patch.dict(os.environ, env or {}), _captured():
+        mod.main(["--ticker", "AAPL", "--out", os.path.join(tmp, "o.json"), *argv])
+    return seen.get("block_media")
+
+
+@check("media blocking: on through a local proxy by default, off with --load-media / TIPRANKS_LOAD_MEDIA=1, "
+       "off without a proxy and over --cdp-endpoint, forced by the hidden --block-media")
+def _():
+    default = proxy_check.BLOCK_MEDIA_BY_DEFAULT
+    for mod in ENGINE_MODULES:
+        name = mod.__name__
+        assert _block_media_passed(mod, "--proxy", "http://127.0.0.1:1") is default, name
+        assert _block_media_passed(mod, "--proxy", "http://127.0.0.1:1", "--load-media") is False, name
+        assert _block_media_passed(mod, "--proxy", "http://127.0.0.1:1",
+                                   env={"TIPRANKS_LOAD_MEDIA": "1"}) is False, name
+        assert _block_media_passed(mod, "--proxy", "http://127.0.0.1:1",
+                                   env={"TIPRANKS_LOAD_MEDIA": "0"}) is default, name
+        assert _block_media_passed(mod) is False, name
+        assert _block_media_passed(mod, "--proxy", "http://127.0.0.1:1",
+                                   "--cdp-endpoint", "ws://127.0.0.1:9222") is False, name
+        assert _block_media_passed(mod, "--block-media") is True, name
+        with _captured():
+            try:
+                mod.parse_args(["--ticker", "AAPL", "--load-media", "--block-media"])
+                exclusive = False
+            except SystemExit:
+                exclusive = True
+        assert exclusive, f"{name}: --load-media and --block-media must be mutually exclusive"
+    parser = _argparse.ArgumentParser()
+    proxy_check.add_media_flags(parser)
+    assert "--block-media" not in parser.format_help() and "--load-media" in parser.format_help()
+    assert env_config.ENV_KEYS.get("TIPRANKS_LOAD_MEDIA") == "load_media"
+
+
+class _FakeRoute:
+    def __init__(self, resource_type):
+        self.request = type("R", (), {"resource_type": resource_type})()
+        self.verdict = None
+
+    def abort(self):
+        self.verdict = "abort"
+
+    def continue_(self):
+        self.verdict = "continue"
+
+
+@check("media blocking, Playwright: route on every URL aborts image/media/font and continues everything "
+       "else (document, script, xhr, fetch, stylesheet)")
+def _():
+    ctx = _mock.MagicMock()
+    with _captured():
+        proxy_check.install_playwright(ctx)
+    pattern, handler = ctx.route.call_args[0]
+    assert pattern == "**/*", pattern
+    verdicts = {}
+    for rtype in ("image", "media", "font", "document", "script", "xhr", "fetch", "stylesheet"):
+        route = _FakeRoute(rtype)
+        handler(route)
+        verdicts[rtype] = route.verdict
+    blocked = {"image", "media", "font"}
+    assert all(verdicts[t] == ("abort" if t in blocked else "continue") for t in verdicts), verdicts
+
+
+@check("media blocking, pyppeteer: CDP Fetch on its own session pauses ONLY Image/Media/Font and fails "
+       "them; never the removed Network.setRequestInterception")
+def _():
+    cdp = _mock.MagicMock()
+    cdp.send = _mock.AsyncMock()
+    page = _mock.MagicMock()
+    page.target.createCDPSession = _mock.AsyncMock(return_value=cdp)
+
+    async def drive():
+        await proxy_check.install_pyppeteer(page)
+        cdp.on.call_args[0][1]({"requestId": "r1", "resourceType": "Image"})
+        await _sv_asyncio.sleep(0)
+    loop = _sv_asyncio.new_event_loop()
+    try:
+        with _captured():
+            loop.run_until_complete(drive())
+    finally:
+        loop.close()
+    calls = [c[0] for c in cdp.send.await_args_list]
+    enable = next((c[1] for c in calls if c[0] == "Fetch.enable"), {})
+    kinds = sorted(pt.get("resourceType") for pt in enable.get("patterns", []))
+    assert cdp.on.call_args[0][0] == "Fetch.requestPaused" and kinds == ["Font", "Image", "Media"], kinds
+    assert ("Fetch.failRequest", {"requestId": "r1", "errorReason": "BlockedByClient"}) in calls, calls
+    assert not page.setRequestInterception.called
+
+
+@check("media blocking, Selenium: CDP Network.setBlockedURLs with image/video/font patterns only; a "
+       "driver that refuses CDP is not fatal")
+def _():
+    driver = _mock.MagicMock()
+    with _captured():
+        assert proxy_check.install_selenium(driver) is True
+    sent = {c[0][0]: c[0][1] for c in driver.execute_cdp_cmd.call_args_list}
+    urls = sent["Network.setBlockedURLs"]["urls"]
+    assert "*.png" in urls and "*.woff2" in urls and "*.mp4?*" in urls, urls
+    assert not [u for u in urls if re.search(r"\.(html?|js|json|css)\b", u)], urls
+    broken = _mock.MagicMock()
+    broken.execute_cdp_cmd.side_effect = RuntimeError("no CDP")
+    with _captured():
+        assert proxy_check.install_selenium(broken) is False
+
+
+def _engine_installs_blocking(mod, block_media):
+    """Drive one engine's real run() on fakes; True if blocking went in."""
+    blocked = (None, "remote_api_error")
+    saved = {}
+
+    def _patch(name, value):
+        saved[name] = getattr(mod, name)
+        setattr(mod, name, value)
+    try:
+        with _captured():
+            if mod is playwright_scraper:
+                ctx = _mock.MagicMock()
+                page = _mock.MagicMock(context=ctx)
+                browser = _mock.MagicMock()
+                browser.new_page.return_value = page
+                pw = _mock.MagicMock()
+                pw.__enter__.return_value = pw
+                pw.chromium.launch.return_value = browser
+                _patch("sync_playwright", lambda: pw)
+                _patch("fetch_one", lambda page, ticker: blocked)
+                mod.run(["AAPL"], block_media=block_media)
+                return ctx.route.called
+            if mod is selenium_scraper:
+                chrome = _mock.MagicMock()
+                _patch("webdriver", _mock.MagicMock(Chrome=chrome))
+                _patch("Options", _mock.MagicMock)
+                _patch("fetch_one", lambda driver, ticker: blocked)
+                mod.run(["AAPL"], block_media=block_media)
+                return any(c[0][0] == "Network.setBlockedURLs"
+                           for c in chrome.return_value.execute_cdp_cmd.call_args_list)
+            cdp = _mock.MagicMock()
+            cdp.send = _mock.AsyncMock()
+            page = _mock.MagicMock()
+            page.target.createCDPSession = _mock.AsyncMock(return_value=cdp)
+            browser = _mock.MagicMock()
+            browser.newPage = _mock.AsyncMock(return_value=page)
+            browser.close = _mock.AsyncMock()
+
+            async def fake_launch(**kwargs):
+                return browser
+
+            async def fake_fetch(page, ticker):
+                return blocked
+            _patch("pyppeteer_launch", object())
+            _patch("_launch", fake_launch)
+            _patch("fetch_one_async", fake_fetch)
+            loop = _sv_asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(mod.run_async(["AAPL"], block_media=block_media))
+            finally:
+                loop.close()
+            return any(c[0][0] == "Fetch.enable" for c in cdp.send.await_args_list)
+    finally:
+        for name, value in saved.items():
+            setattr(mod, name, value)
+
+
+@check("media blocking: each engine's run() installs it on its page/driver when asked, and not otherwise")
+def _():
+    for mod in ENGINE_MODULES:
+        assert _engine_installs_blocking(mod, True) is True, f"{mod.__name__}: blocking not installed"
+        assert _engine_installs_blocking(mod, False) is False, f"{mod.__name__}: blocking installed unasked"
+
+
 def main() -> int:
     passed = 0
     for name, fn in _checks:

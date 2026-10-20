@@ -6,6 +6,35 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+> **Behaviour changes.** (1) A run through a local proxy now makes one
+> pre-check request before starting a browser. A proxy that answers
+> **HTTP 407** or **402** ends the run with **exit 5** and
+> `<out>.latest_attempt.meta.json` (`status: failed`, `stop_reason:
+> proxy_auth_failed` / `proxy_balance_exhausted`) instead of timing out.
+> (2) Through a local proxy, images, video/audio and fonts are **no longer
+> downloaded**; `--load-media` (or `TIPRANKS_LOAD_MEDIA=1`) restores them.
+> Runs without a proxy or over `--cdp-endpoint` are unchanged.
+
+### Added
+
+- `proxy_check.py`: the proxy pre-check (one CONNECT plus `HEAD /robots.txt`
+  on www.tipranks.com, no third-party service) and media blocking for all
+  three engines. The 407 message names `TIPRANKS_PROXY` and says the
+  gateway refused the credential (or the traffic balance is exhausted); a
+  402 says the proxy traffic/balance is exhausted. Neither prints the login
+  or the password. A proxy that does not answer keeps the existing
+  behaviour.
+- `--load-media` on all three engines, and `TIPRANKS_LOAD_MEDIA` in
+  `.env.example`.
+- `ProxyPool.peek()`, so the pre-check checks the proxy the run is about
+  to use without skipping it.
+- Offline checks: a stub proxy that answers 407/402/200 or nothing, each
+  engine driven to exit 5 without a browser on a 407, the attempt sidecar,
+  no pre-check over `--cdp-endpoint`, the blocking decision per engine, the
+  Playwright route handler, the pyppeteer Fetch patterns, the Selenium
+  blocked-URL list, and each engine's `run()` installing blocking only when
+  asked.
+
 ### Changed
 
 - The saved copy of tipranks.com's robots.txt is the one served on 2026-10-20. The site dropped four `/news/...` Disallow lines, anchored its two query-string rules at `/` (`/*?*s=`, `/*?*id=`), and added `/*?hash=` and `/*?llf=`. The two paths this scraper requests, `/stocks/{ticker}/stock-analysis` and its `payload.json`, have no query string and are allowed under both versions. The canary compares this copy with the live file, and it failed on the change.

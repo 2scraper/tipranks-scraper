@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements-playwright.txt \
     && playwright install --with-deps chromium
 
 COPY output_writer.py tipranks_parser.py diff_runs.py \
-     env_config.py proxy_pool.py captcha_solver.py fingerprint_client.py scraper_api_client.py \
+     env_config.py proxy_pool.py proxy_check.py captcha_solver.py fingerprint_client.py scraper_api_client.py \
      playwright_scraper.py selenium_scraper.py puppeteer_scraper.py smoke_test.py ./
 # smoke_test.py reads its fixtures off disk — leaving any out crashes the
 # build with a FileNotFoundError the moment it reaches that check, same

@@ -60,10 +60,12 @@ except ImportError:  # pragma: no cover - exercised by smoke_test.py with no eng
 from captcha_solver import CaptchaType, SolveBudget, build_injection_script, solve_when_blocked
 from env_config import apply_env, int_between, non_negative_int
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
-from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run
+from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run, finish_without_fetch
+import proxy_check
 from proxy_pool import Proxy, ProxyParseError, ProxyPool, is_proxy_dead_error, load_proxies, redact_credentials
 from scraper_api_client import TwoCaptchaAuthError, TwoCaptchaClient, TwoCaptchaError
 from tipranks_parser import (
+    BASE_URL,
     BLOCK_BODY_MARKERS,
     BLOCK_URL_MARKERS,
     is_allowed,
@@ -238,7 +240,7 @@ def _maybe_solve_captcha(
 def _make_driver(
     headless: bool, executable_path: Optional[str], *,
     proxy: Optional[Proxy] = None, cdp_endpoint: Optional[str] = None,
-    user_agent: Optional[str] = None,
+    user_agent: Optional[str] = None, block_media: bool = False,
 ):
     options = Options()
     if headless:
@@ -270,7 +272,10 @@ def _make_driver(
             )
         options.add_argument(f"--proxy-server={proxy.server_only()}")
 
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    if block_media:
+        proxy_check.install_selenium(driver)
+    return driver
 
 
 def run(
@@ -284,6 +289,7 @@ def run(
     solve_captcha_policy: str = "when-blocked",
     min_score: float = 0.3,
     block_retries: int = 0,
+    block_media: bool = False,
 ) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """Returns (ratings, tickers_completed, failed_tickers,
     blocked_tickers, parser_failed_tickers) — same contract as playwright_scraper.run(). See
@@ -303,6 +309,7 @@ def run(
     try:
         driver = _make_driver(
             headless, executable_path, proxy=proxy, cdp_endpoint=cdp_endpoint, user_agent=user_agent,
+            block_media=block_media,
         )
     except Exception as exc:
         log.error(
@@ -334,7 +341,8 @@ def run(
                     log.warning("Proxy %s is dead — switching to %s.", proxy.masked(), replacement.masked())
                     driver.quit()
                     proxy = replacement
-                    driver = _make_driver(headless, executable_path, proxy=proxy, user_agent=user_agent)
+                    driver = _make_driver(headless, executable_path, proxy=proxy, user_agent=user_agent,
+                                          block_media=block_media)
                     rating, error_kind = fetch_one(driver, ticker)
                 if error_kind != "blocked":
                     break
@@ -435,6 +443,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--proxy", default=None, help="A single proxy, e.g. http://login:pass@host:port (or set TIPRANKS_PROXY). Selenium's --proxy-server cannot authenticate — credentials are stripped, with a warning.")
     parser.add_argument("--proxy-file", default=None, help="One proxy per line, same formats as --proxy")
     parser.add_argument("--proxy-shuffle", action="store_true")
+    proxy_check.add_media_flags(parser)
     parser.add_argument("--twocaptcha-key", default=None, help="(or set TWOCAPTCHA_KEY)")
     parser.add_argument("--captcha-api", default=None, help="Override the 2Captcha API base URL (testing only)")
     parser.add_argument(
@@ -588,6 +597,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             log.warning("Ignoring --proxy: a --cdp-endpoint session already carries its own exit IP.")
             pool = None
 
+        # One request through the proxy before a browser exists: a 407 or
+        # 402 from the gateway ends the run here, in seconds, instead of
+        # surfacing as a navigation timeout. Only when the local proxy is
+        # actually used: over --cdp-endpoint the remote browser has its own.
+        refused = None if args.cdp_endpoint else proxy_check.gate(pool, BASE_URL)
+        if refused:
+            return finish_without_fetch(
+                args.out, stop_reason=refused.stop_reason, engine=ENGINE_NAME,
+                tickers_requested=tickers, started_at=started_at)
+        block_media = proxy_check.block_media(args, pool, remote=bool(args.cdp_endpoint))
+
         captcha_client = None
         if args.twocaptcha_key and (args.solve_captcha != "off" or args.fingerprint):
             captcha_client = TwoCaptchaClient(args.twocaptcha_key, api_base=args.captcha_api)
@@ -614,6 +634,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 solve_captcha_policy=args.solve_captcha,
                 min_score=args.min_score,
                 block_retries=args.block_retries,
+                block_media=block_media,
             )
         except Exception as exc:
             print(f"crash: {exc}", file=sys.stderr)

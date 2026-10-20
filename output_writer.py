@@ -183,6 +183,44 @@ def write_meta(
     )
 
 
+ATTEMPT_META_SUFFIX = ".latest_attempt.meta.json"
+
+
+def finish_without_fetch(
+    out_path: str,
+    *,
+    stop_reason: str,
+    engine: str,
+    tickers_requested: List[str],
+    started_at: float,
+) -> int:
+    """End a run stopped before anything was fetched; return exit 5.
+
+    Used by the proxy pre-check (a 407 or 402 from the proxy). The record
+    goes to `<out>.latest_attempt.meta.json`, NOT `<out>.meta.json`: the
+    latter describes the data file beside it, and a previous run's good
+    output is still there, untouched, so overwriting its metadata with a
+    failure would make the pair contradict each other.
+    """
+    meta = {
+        "status": "failed",
+        "stop_reason": stop_reason,
+        "engine": engine,
+        "tickers_requested": tickers_requested,
+        "tickers_completed": [],
+        "failed_tickers": list(tickers_requested),
+        "rating_count": 0,
+        "started_at": started_at,
+        "finished_at": time.time(),
+    }
+    path = f"{out_path}{ATTEMPT_META_SUFFIX}"
+    _atomic_write_text(path, json.dumps(meta, ensure_ascii=False, indent=2))
+    print(f"[+] Wrote attempt metadata -> {path} (status=failed, stop_reason={stop_reason})")
+    print(f"[!] Failed run: nothing was fetched ({stop_reason}). Any previous "
+          f"output and its .meta.json are untouched.")
+    return EXIT_REMOTE_API_ERROR
+
+
 # --------------------------------------------------------------------------- #
 # finish_run — decides exit code, whether to write output/sidecar at all.
 # --------------------------------------------------------------------------- #
