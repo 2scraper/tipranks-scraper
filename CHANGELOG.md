@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-20
+
+### Fixed
+
+- Smart Score, consensus and analyst counts were missing for about one ticker in ten (55 of the S&P 500, e.g. ABNB, AXP, BKNG). The payload can list the ticker in its own "similar stocks" sidebar as a stub (name and price target only) before its full record, and the parser took the first match. It now takes the fullest matching record. Live re-run: Smart Score for 503 of 503, consensus for 500 (L, NWS and TPL have no analyst consensus on the site).
+
+### Added
+
+- README: rate-limit observations. The S&P 500 ran three times back to back from one IP, about 1,500 requests in 8 minutes: 503 of 503 each time, no 403/429.
+
 ## [0.4.1] - 2026-10-20
 
 ### Fixed
@@ -347,7 +357,8 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.0...v0.3.1

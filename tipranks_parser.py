@@ -390,7 +390,13 @@ def find_ticker_record(payload: Dict[str, Any], ticker: str) -> Optional[Dict[st
     """Find the requested ticker's own record in a stock-analysis
     payload's `models.stocks` list — never just `stocks[0]`, since that
     list also carries unrelated sidebar entries (confirmed live: AAPL's
-    payload included ADTN/AEHR/BELFB/ONTO/SAP alongside AAPL itself)."""
+    payload included ADTN/AEHR/BELFB/ONTO/SAP alongside AAPL itself).
+
+    The ticker can also appear in its own sidebar, as a stub (name and
+    price target only) listed BEFORE its full record: live on 2026-10-20
+    that was 55 of the S&P 500 (ABNB, AXP, BKNG, ...), and taking the
+    first match lost their Smart Score and consensus. When several
+    records match, the one with the most fields wins."""
     if not isinstance(payload, dict):
         return None
     models = payload.get("models")
@@ -400,12 +406,11 @@ def find_ticker_record(payload: Dict[str, Any], ticker: str) -> Optional[Dict[st
     if not isinstance(stocks, list):
         return None
     ticker_upper = normalize_ticker(ticker)
-    for stock in stocks:
-        if not isinstance(stock, dict):
-            continue
-        if str(stock.get("_id", "")).upper() == ticker_upper:
-            return stock
-    return None
+    matches = [
+        stock for stock in stocks
+        if isinstance(stock, dict) and str(stock.get("_id", "")).upper() == ticker_upper
+    ]
+    return max(matches, key=len, default=None)
 
 
 def missing_record_kind(payload: Any) -> str:
