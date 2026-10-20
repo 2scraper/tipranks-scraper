@@ -61,7 +61,7 @@ from captcha_solver import CaptchaType, SolveBudget, build_injection_script, sol
 from env_config import apply_env, int_between, non_negative_int
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run
-from proxy_pool import Proxy, ProxyParseError, ProxyPool, load_proxies, redact_credentials
+from proxy_pool import Proxy, ProxyParseError, ProxyPool, is_proxy_dead_error, load_proxies, redact_credentials
 from scraper_api_client import TwoCaptchaAuthError, TwoCaptchaClient, TwoCaptchaError
 from tipranks_parser import (
     BLOCK_BODY_MARKERS,
@@ -85,6 +85,13 @@ NAV_TIMEOUT_S = 30
 
 _BLOCKED_STATUSES = (403, 429)
 _NOT_FOUND_STATUSES = (404, 400)
+
+def _first_line(exc: Exception) -> str:
+    """An exception's first line, credentials redacted: driver errors
+    append whole call logs and stack traces after it."""
+    lines = str(exc).strip().splitlines()
+    return redact_credentials(lines[0] if lines else type(exc).__name__)
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -117,7 +124,10 @@ def fetch_one(driver, ticker: str) -> Tuple[Optional[TickerRating], Optional[str
             "var pre = document.querySelector('pre');"
             "return pre ? pre.innerText : (document.body ? document.body.innerText : '');"
         ) or ""
-    except Exception:
+    except Exception as exc:
+        if is_proxy_dead_error(str(exc)):
+            return None, "proxy_dead"
+        log.warning("Could not fetch %s: %s", ticker, _first_line(exc))
         return None, "remote_api_error"
 
     if any(m in current_url.lower() for m in BLOCK_URL_MARKERS) or any(m in html.lower() for m in BLOCK_BODY_MARKERS):
@@ -277,8 +287,9 @@ def run(
 ) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """Returns (ratings, tickers_completed, failed_tickers,
     blocked_tickers, parser_failed_tickers) — same contract as playwright_scraper.run(). See
-    that function's own docstring for the "one proxy for the whole run,
-    no mid-run rotation" scoping decision, which applies unchanged here."""
+    that function's own docstring for the proxy policy (one proxy per
+    run; a dead one is replaced from --proxy-file), which applies
+    unchanged here."""
     if webdriver is None:
         raise RuntimeError("selenium is not installed")
 
@@ -301,6 +312,7 @@ def run(
         return ratings, completed, list(tickers), blocked, parser_failed
 
     try:
+        warned_last_proxy = False
         for ticker in tickers:
             rating = None
             error_kind = None
@@ -308,6 +320,22 @@ def run(
             budget = SolveBudget()
             for attempt in range(block_retries + 1):
                 rating, error_kind = fetch_one(driver, ticker)
+                while error_kind == "proxy_dead":
+                    replacement = proxy_pool.replace_dead(proxy) if proxy_pool and proxy else None
+                    if replacement is None:
+                        if not warned_last_proxy:
+                            log.warning(
+                                "Cannot get through proxy %s and there is no other proxy to switch to.",
+                                proxy.masked() if proxy else "(none)",
+                            )
+                            warned_last_proxy = True
+                        error_kind = "remote_api_error"
+                        break
+                    log.warning("Proxy %s is dead — switching to %s.", proxy.masked(), replacement.masked())
+                    driver.quit()
+                    proxy = replacement
+                    driver = _make_driver(headless, executable_path, proxy=proxy, user_agent=user_agent)
+                    rating, error_kind = fetch_one(driver, ticker)
                 if error_kind != "blocked":
                     break
                 # Only solve when a retry follows: a token bought on the

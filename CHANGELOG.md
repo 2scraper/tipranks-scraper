@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-20
+
+### Added
+
+- Dead-proxy failover. When the browser cannot get through its proxy at all (`ERR_PROXY_CONNECTION_FAILED` and the other `PROXY_DEAD_MARKERS`), every engine relaunches on the next proxy in `--proxy-file` and fetches the same ticker again, with a warning naming both proxies. Before, the run carried on with the dead proxy and ended in exit 5 without a word. With no other proxy left, the tickers fail as before (exit 5), but a warning now says why. Live on 2026-10-20: two dead proxies then a working one gave exit 0 on all three engines, including a switch to a password-protected proxy on Playwright and pyppeteer.
+- Every other failed fetch prints `Could not fetch TICKER: <reason>` (first line only, credentials redacted) instead of failing silently.
+
 ## [0.4.2] - 2026-10-20
 
 ### Fixed
@@ -357,7 +364,8 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.1...v0.4.0

@@ -56,7 +56,7 @@ from captcha_solver import CaptchaType, SolveBudget, build_injection_script, sol
 from env_config import apply_env, int_between, non_negative_int
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run
-from proxy_pool import Proxy, ProxyParseError, ProxyPool, load_proxies, redact_credentials
+from proxy_pool import Proxy, ProxyParseError, ProxyPool, is_proxy_dead_error, load_proxies, redact_credentials
 from scraper_api_client import TwoCaptchaAuthError, TwoCaptchaClient, TwoCaptchaError
 from tipranks_parser import (
     BLOCK_BODY_MARKERS,
@@ -80,6 +80,13 @@ NAV_TIMEOUT_MS = 30_000
 
 _BLOCKED_STATUSES = (403, 429)
 _NOT_FOUND_STATUSES = (404, 400)
+
+def _first_line(exc: Exception) -> str:
+    """An exception's first line, credentials redacted: driver errors
+    append whole call logs and stack traces after it."""
+    lines = str(exc).strip().splitlines()
+    return redact_credentials(lines[0] if lines else type(exc).__name__)
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -210,7 +217,10 @@ async def fetch_one_async(page, ticker: str) -> Tuple[Optional[TickerRating], Op
     try:
         response = await page.goto(payload_url, {"waitUntil": "domcontentloaded", "timeout": NAV_TIMEOUT_MS})
         body = await response.text() if response is not None else ""
-    except Exception:
+    except Exception as exc:
+        if is_proxy_dead_error(str(exc)):
+            return None, "proxy_dead"
+        log.warning("Could not fetch %s: %s", ticker, _first_line(exc))
         return None, "remote_api_error"
 
     status = response.status if response is not None else None
@@ -326,8 +336,9 @@ async def run_async(
 ) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """Returns (ratings, tickers_completed, failed_tickers,
     blocked_tickers, parser_failed_tickers) — same contract as playwright_scraper.run(). See
-    that function's own docstring for the "one proxy for the whole run,
-    no mid-run rotation" scoping decision, which applies unchanged here."""
+    that function's own docstring for the proxy policy (one proxy per
+    run; a dead one is replaced from --proxy-file), which applies
+    unchanged here."""
     if pyppeteer_launch is None:
         raise RuntimeError("pyppeteer is not installed")
 
@@ -355,6 +366,7 @@ async def run_async(
         if cdp_endpoint:
             await _enable_scraping_browser_auto_solve(page)
 
+        warned_last_proxy = False
         for ticker in tickers:
             rating = None
             error_kind = None
@@ -362,6 +374,31 @@ async def run_async(
             budget = SolveBudget()
             for attempt in range(block_retries + 1):
                 rating, error_kind = await fetch_one_async(page, ticker)
+                while error_kind == "proxy_dead":
+                    replacement = proxy_pool.replace_dead(proxy) if proxy_pool and proxy else None
+                    if replacement is None:
+                        if not warned_last_proxy:
+                            log.warning(
+                                "Cannot get through proxy %s and there is no other proxy to switch to.",
+                                proxy.masked() if proxy else "(none)",
+                            )
+                            warned_last_proxy = True
+                        error_kind = "remote_api_error"
+                        break
+                    log.warning("Proxy %s is dead — switching to %s.", proxy.masked(), replacement.masked())
+                    if proxy.pyppeteer_auth_dict():
+                        await _stop_proxy_auth(page)
+                    await browser.close()
+                    page = None
+                    proxy = replacement
+                    browser = await _launch(
+                        headless=headless, executable_path=executable_path, proxy=proxy, cdp_endpoint=None,
+                    )
+                    page = await browser.newPage()
+                    if user_agent:
+                        await page.setUserAgent(user_agent)
+                    await _authenticate_if_needed(page, proxy)
+                    rating, error_kind = await fetch_one_async(page, ticker)
                 if error_kind != "blocked":
                     break
                 # Over --cdp-endpoint, 2Captcha's own auto-solve (armed

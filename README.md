@@ -141,9 +141,19 @@ password, separate from the API key. `--scraper-api-country` and
 `--scraper-api-profile-id` replace the endpoint's `-country-`/`-pid-`
 parts. Verified live on 2026-10-19 (AAPL and MSFT, complete).
 
-**Scoping decision, stated plainly**: this repo picks ONE proxy for the
-whole run and does not rotate mid-run — a per-ticker JSON fetch loop
-doesn't carry the volume that proxy rotation is built for.
+**Proxies**: a run uses ONE proxy and does not rotate per ticker or on
+a block, since a per-ticker JSON fetch loop doesn't carry the volume that
+proxy rotation is built for. The exception is a dead proxy, one the
+browser cannot get through at all (`ERR_PROXY_CONNECTION_FAILED` and the
+like). Then the browser is relaunched on the next proxy in
+`--proxy-file`, the same ticker is fetched again, and a warning names
+both proxies (passwords masked). A dead proxy with nothing left to switch
+to fails its tickers as remote errors (exit 5) with a warning saying so,
+and the last proxy is never dropped, so the run keeps trying it. Any
+other fetch error is printed as `Could not fetch TICKER: <reason>`.
+Verified live on 2026-10-20 on all three engines: two dead proxies then a
+working one gave exit 0, including a switch to a password-protected
+proxy on Playwright and pyppeteer.
 
 Credentials belong in `.env` / `TIPRANKS_PROXY` / `TIPRANKS_CDP_ENDPOINT`
 / `TWOCAPTCHA_KEY` — never as literal `--proxy`/`--cdp-endpoint`/
