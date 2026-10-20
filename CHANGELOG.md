@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-20
+
+### Fixed
+
+- pyppeteer on an Apple Silicon Mac no longer crashes without `--executable-path`: it finds Google Chrome or Chromium in `/Applications` or `~/Applications` and uses it instead of its bundled Chromium, which segfaults there. Other platforms and the Docker image still use the bundled browser; `--executable-path` still wins. Live on 2026-10-20: 4 of 4 tickers, exit 0, no flag.
+- pyppeteer no longer prints `DeprecationWarning: There is no current event loop` on every run (Python 3.12+): it runs on a loop of its own.
+
+### Changed
+
+- `--tickers-file` skips `#` comments, whole-line (like `--proxy-file`) or after a ticker (`MSFT  # Microsoft`). A file holding only comments is bad usage (exit 2), the same as an empty one. All three engines share one reader, `tipranks_parser.read_tickers_file`.
+
 ## [0.4.0] - 2026-10-19
 
 > **Behaviour change.** Every browser engine now navigates straight to
@@ -336,7 +347,8 @@ the ticker forecast page is free, public data.
 - Untested: non-USD tickers, and a `-` in a ticker symbol (a `.`, e.g.
   `BRK.B`, is confirmed live).
 
-[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/2scraper/tipranks-scraper/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/2scraper/tipranks-scraper/compare/v0.2.1...v0.3.0

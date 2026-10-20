@@ -283,6 +283,18 @@ def normalize_ticker(raw: str) -> str:
     return ticker
 
 
+def read_tickers_file(path: str) -> List[str]:
+    """Read a --tickers-file: one ticker per line.
+
+    Blank lines and ``#`` comments are skipped, whole-line ones like
+    --proxy-file's and trailing ones (``AAPL  # Apple``) too; ``#`` can
+    never be part of a ticker (see normalize_ticker). Raises OSError when
+    the file cannot be read.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        return [t for t in (line.split("#", 1)[0].strip() for line in f) if t]
+
+
 def ticker_page_url(ticker: str) -> str:
     return f"{BASE_URL}/stocks/{normalize_ticker(ticker).lower()}/stock-analysis"
 

@@ -70,6 +70,7 @@ from tipranks_parser import (
     missing_record_kind,
     normalize_ticker,
     parse_payload,
+    read_tickers_file,
     ticker_page_url,
     ticker_payload_url,
     TickerRating,
@@ -458,8 +459,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     tickers = list(args.tickers)
     if args.tickers_file:
         try:
-            with open(args.tickers_file, "r", encoding="utf-8") as f:
-                tickers.extend(line.strip() for line in f if line.strip())
+            tickers.extend(read_tickers_file(args.tickers_file))
         except OSError as exc:
             print(f"error: could not read --tickers-file: {exc}", file=sys.stderr)
             return EXIT_BAD_USAGE

@@ -27,7 +27,10 @@ Selenium's own browser/driver downloads were not affected on the same
 machine, so this is specific to pyppeteer's old pinned revision, not this
 site or this repo's code. The practical fix is `--executable-path`,
 below: point this engine at an already-installed, working
-Chrome/Chromium instead of pyppeteer's own broken bundled one.
+Chrome/Chromium instead of pyppeteer's own broken bundled one. On an
+Apple Silicon Mac without that flag, this engine looks for Google Chrome
+or Chromium in /Applications (and ~/Applications) and uses it on its own
+(installed_chrome()); the bundled one is only tried when neither is there.
 """
 from __future__ import annotations
 
@@ -35,6 +38,8 @@ import argparse
 import asyncio
 import json
 import logging
+import os
+import platform
 import sys
 import time
 from datetime import datetime, timezone
@@ -60,6 +65,7 @@ from tipranks_parser import (
     missing_record_kind,
     normalize_ticker,
     parse_payload,
+    read_tickers_file,
     ticker_page_url,
     ticker_payload_url,
     TickerRating,
@@ -77,6 +83,31 @@ _NOT_FOUND_STATUSES = (404, 400)
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Where an installed Chrome/Chromium lives on macOS, in preference order.
+_MAC_CHROME_APPS = (
+    "Google Chrome.app/Contents/MacOS/Google Chrome",
+    "Chromium.app/Contents/MacOS/Chromium",
+)
+
+
+def installed_chrome(app_dirs: Tuple[str, ...] = ("/Applications", "~/Applications")) -> Optional[str]:
+    """An installed Chrome/Chromium to use instead of the bundled one, or None.
+
+    Only on Apple Silicon macOS, the one platform where pyppeteer's pinned
+    Chromium is confirmed to segfault (module docstring). Everywhere else,
+    including the Docker image, the bundled browser works and stays the
+    default.
+    """
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        return None
+    for apps in app_dirs:
+        for app in _MAC_CHROME_APPS:
+            path = os.path.join(os.path.expanduser(apps), app)
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+    return None
 
 
 async def _launch(
@@ -385,7 +416,12 @@ def run(
     min_score: float = 0.3,
     block_retries: int = 0,
 ) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
-    return asyncio.get_event_loop().run_until_complete(
+    # A loop of our own: asyncio.get_event_loop() with none set warns
+    # (DeprecationWarning) on every run since Python 3.12. Left open, not
+    # asyncio.run(): pyppeteer's exit handlers still run on this loop.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(
         run_async(
             tickers, headless=headless, executable_path=executable_path,
             proxy_pool=proxy_pool, cdp_endpoint=cdp_endpoint, user_agent=user_agent,
@@ -506,8 +542,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     tickers = list(args.tickers)
     if args.tickers_file:
         try:
-            with open(args.tickers_file, "r", encoding="utf-8") as f:
-                tickers.extend(line.strip() for line in f if line.strip())
+            tickers.extend(read_tickers_file(args.tickers_file))
         except OSError as exc:
             print(f"error: could not read --tickers-file: {exc}", file=sys.stderr)
             return EXIT_BAD_USAGE
@@ -614,11 +649,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if profile:
                     user_agent = user_agent_from(profile)
 
+        executable_path = args.executable_path
+        if not executable_path and not args.cdp_endpoint:
+            executable_path = installed_chrome()
+            if executable_path:
+                log.info("Using installed Chrome at %s (pyppeteer's bundled Chromium crashes on Apple Silicon).",
+                         executable_path)
+
         try:
             ratings, completed, failed, blocked_tickers, parser_failed = run(
                 tickers,
                 headless=not args.headed,
-                executable_path=args.executable_path,
+                executable_path=executable_path,
                 proxy_pool=pool,
                 cdp_endpoint=args.cdp_endpoint,
                 user_agent=user_agent,
@@ -629,7 +671,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         except Exception as exc:
             print(f"crash: {exc}", file=sys.stderr)
-            if "Browser closed unexpectedly" in str(exc) and not args.executable_path and not args.cdp_endpoint:
+            if "Browser closed unexpectedly" in str(exc) and not executable_path and not args.cdp_endpoint:
                 # pyppeteer's own pinned Chromium segfaults on Apple Silicon (module docstring).
                 print(
                     "hint: pyppeteer's bundled Chromium could not start; point --executable-path at an "
