@@ -3,7 +3,8 @@
 **Open-source stock-ticker forecast scraper for tipranks.com — three engines, free public data, no login, no credentials required for a normal run.**
 
 Pull a stock ticker's Smart Score, analyst consensus (Buy/Hold/Sell),
-and price target straight into JSON or CSV.
+price target, dividends, earnings dates and insider, hedge fund and news
+sentiment straight into JSON or CSV.
 
 [**View source on GitHub →**](https://github.com/2scraper/tipranks-scraper)
 
@@ -22,6 +23,9 @@ and price target straight into JSON or CSV.
   never merged into one
 - Price target average/high/low/upside, buy/hold/sell counts, a
   best-effort current price
+- Dividends (latest and next declared), last and next earnings with EPS
+  estimates, insider / hedge fund / retail-investor activity, and news
+  and blogger sentiment
 - JSON and CSV export, with a documented `TickerRating` schema, atomic file
   replacement, and a checksummed `.meta.json` sidecar
 - robots.txt honoured, re-checked from the real captured text at

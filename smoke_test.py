@@ -130,6 +130,50 @@ def _():
     assert (r.current_price, r.current_price_asof, r.current_price_source) == (None, None, None)
 
 
+@check("parse_payload reads dividends, earnings, insider / hedge fund / investor activity and "
+       "news / blogger sentiment (live KO capture, 2026-10-20)")
+def _():
+    from tipranks_parser import parse_payload
+
+    row = parse_payload(_load_fixture("tipranks_ko_extras.json"), "KO", source_url="x", scraped_at="x")
+    assert (row.dividend_amount, row.dividend_frequency, row.dividend_annualized_payout) == (0.53, "quarterly", 2.1)
+    assert row.dividend_ex_date == "2026-09-15T00:00:00.000Z" and row.dividend_pay_date == "2026-10-01T00:00:00.000Z"
+    assert round(row.dividend_yield, 4) == 0.0253 and round(row.dividend_payout_ratio, 4) == 0.9204
+    assert (row.next_dividend_amount, row.next_dividend_ex_date) == (0.53, "2026-12-01T00:00:00.000Z")
+    assert (row.last_earnings_date, row.last_earnings_eps, row.last_earnings_eps_estimate) == (
+        "2026-07-28T00:00:00.000Z", 0.97, 0.932)
+    assert (row.next_earnings_date, row.next_earnings_time, row.next_earnings_eps_estimate) == (
+        "2026-10-27T00:00:00.000Z", "PreMarket", 0.881)
+    assert row.next_earnings_revenue_estimate == 12919928000
+    assert (row.insider_sentiment, row.insider_signal, round(row.insider_net_usd)) == ("veryNegative", 0.0342, -33647685)
+    assert (row.hedge_fund_sentiment, row.hedge_fund_signal, row.hedge_fund_net_shares) == ("positive", 0.6912, 3632264)
+    assert (row.investor_sentiment, row.investor_signal) == ("positive", 0.4073)
+    assert row.investor_change_7d > 0 and row.investor_change_30d > 0
+    assert (row.news_sentiment, row.news_sentiment_score, row.news_bullish_ratio) == ("veryPositive", 1, 1)
+    assert (row.news_articles_last_week, row.news_articles_weekly_average) == (55, 37)
+    assert (row.blogger_sentiment, row.blogger_opinion_count) == ("positive", 70)
+    assert round(row.blogger_bullish_ratio, 4) == 0.8143
+
+
+@check("the extra columns stay None, not invented, for a non-payer with no insider activity "
+       "(live TSLA capture) and for a record without any of those blocks (AAPL fixture)")
+def _():
+    from dataclasses import asdict
+
+    from tipranks_parser import parse_payload
+
+    row = parse_payload(_load_fixture("tipranks_tsla_no_dividend.json"), "TSLA", source_url="x", scraped_at="x")
+    dividend_cols = [k for k in asdict(row) if "dividend" in k]
+    assert len(dividend_cols) == 10 and all(getattr(row, k) is None for k in dividend_cols), dividend_cols
+    assert row.insider_sentiment is None and row.insider_signal is None
+    assert row.insider_net_usd == 0, "the site's own 0 for no insider activity"
+    assert row.next_earnings_time == "AfterHours" and row.hedge_fund_sentiment == "veryNegative"
+
+    row = asdict(parse_payload(_load_fixture("tipranks_aapl_stock_analysis.json"), "AAPL", source_url="x", scraped_at="x"))
+    extras = list(row)[list(row).index("dividend_amount"):]
+    assert len(extras) == 35 and all(row[k] is None for k in extras)
+
+
 @check("parse_payload degrades gracefully when consensus fields are absent")
 def _():
     from tipranks_parser import parse_payload
