@@ -220,10 +220,12 @@ BLOCK_BODY_MARKERS = ("just a moment", "_cf_chl_opt")
 BLOCK_URL_MARKERS = ("__cf_chl_rt_tk",)
 
 # Verbatim capture of https://www.tipranks.com/robots.txt (single
-# `User-agent: *` group). Kept as a literal string, not a hand-written
+# `User-agent: *` group), re-captured 2026-10-20. Kept as a literal string, not a hand-written
 # summary, so `is_allowed()` re-derives the answer from the real rules
 # rather than from a conclusion that can go stale silently.
 ROBOTS_TXT_CAPTURE = """\
+# robotstxt.org
+
 User-agent: *
 Sitemap: https://www.tipranks.com/sitemap.xml
 Disallow: /bin/
@@ -232,11 +234,7 @@ Disallow: /downloads/
 Disallow: /client/
 Disallow: /Views/
 Disallow: /thank-you/
-Disallow: /news/blurbs/
-Disallow: /news/pre-earnings/
 Disallow: /news/pre-market-movers/
-Disallow: /news/dividends/
-Disallow: /news/earnings/
 Disallow: /news/market-movers/
 Disallow: /class-action/
 Disallow: /research-tools/*
@@ -245,8 +243,10 @@ Disallow: /userdisclaimer
 Disallow: /tv/results/*
 Disallow: /api/*
 Disallow: /challenge/*
-Disallow: *?*s=
-Disallow: *?*id=
+Disallow: /*?*s=
+Disallow: /*?*id=
+Disallow: /*?hash=
+Disallow: /*?llf=
 Disallow: /sign-up?redirectTo
 Disallow: /sign-in?redirectTo
 Allow: /stocks/*/options-chain/unusual-options-activity
@@ -254,6 +254,8 @@ Disallow: /stocks/*/options-chain/*
 Allow: /insiders
 Allow: /insiders/*
 Allow: /investors/*
+Sitemap:https://www.tipranks.com/sitemap-articles-news/index.xml
+Sitemap:https://www.tipranks.com/sitemap-articles-news/recent.xml
 """
 
 

@@ -239,6 +239,27 @@ def _():
     assert is_allowed("/insiders/aapl") is True
 
 
+@check("the robots.txt capture is the 2026-10-20 one: its new query-string rules apply, and the two paths this repo fetches stay allowed")
+def _():
+    from tipranks_parser import ROBOTS_TXT_CAPTURE, is_allowed, parse_robots_rules
+
+    rules = parse_robots_rules(ROBOTS_TXT_CAPTURE)
+    # Added on the site between 2026-10-14 and 2026-10-20.
+    for rule in (("disallow", "/*?hash="), ("disallow", "/*?llf="),
+                 ("disallow", "/*?*s="), ("disallow", "/*?*id=")):
+        assert rule in rules, rule
+    # Dropped on the site in the same change.
+    for rule in (("disallow", "*?*s="), ("disallow", "/news/earnings/"),
+                 ("disallow", "/news/dividends/")):
+        assert rule not in rules, rule
+    assert is_allowed("/stocks/aapl/stock-analysis?hash=abc") is False
+    assert is_allowed("/stocks/aapl/stock-analysis?llf=1") is False
+    assert is_allowed("/news/earnings/some-article") is True
+    # The only paths the engines request (no query string):
+    assert is_allowed("/stocks/aapl/stock-analysis") is True
+    assert is_allowed("/stocks/brk.b/stock-analysis/payload.json") is True
+
+
 @check("ticker_page_url / ticker_payload_url lower-case the ticker (site is case-insensitive)")
 def _():
     from tipranks_parser import ticker_page_url, ticker_payload_url
