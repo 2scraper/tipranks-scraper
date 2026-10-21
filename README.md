@@ -192,7 +192,7 @@ working one gave exit 0, including a switch to a password-protected
 proxy on Playwright and pyppeteer.
 
 **Proxy traffic savers.** A proxy is billed by traffic, so a run through
-`--proxy` / `--proxy-file` / `TIPRANKS_PROXY` does two things to avoid
+`--proxy` / `--proxy-file` / `TIPRANKS_PROXY` does three things to avoid
 paying for bytes it does not use:
 
 - **One pre-check before any browser starts**: a CONNECT through the
@@ -220,6 +220,31 @@ paying for bytes it does not use:
   future change of route. `--load-media` (or `TIPRANKS_LOAD_MEDIA=1`)
   loads them. Without a proxy, or over `--cdp-endpoint`, nothing is
   blocked.
+- **Every run is metered and capped**: `--proxy-budget-mb` (default
+  **10**, `0` = no cap, also `TIPRANKS_PROXY_BUDGET_MB`). Once more than
+  that has gone through the proxy, further requests are refused and the
+  run stops before its next ticker. It keeps the ratings it has and exits
+  **6** (or **5** with none), `stop_reason: proxy_budget_exceeded`; the
+  tickers it did not reach are listed in `failed_tickers`. It never
+  carries on past the cap. The sidecars (`<out>.meta.json`, and
+  `<out>.latest_attempt.meta.json`, which every metered run writes) carry
+  `proxy_bytes`, `proxy_budget_bytes` (`null` with no cap) and
+  `proxy_budget_exceeded`, and the log ends with
+  `Proxy traffic: X.X MB of Y MB budget`.
+
+  How the bytes are counted: Playwright sums `request.sizes()` (request
+  headers + body, response headers + body) of every finished or failed
+  request; pyppeteer reads CDP `Network.loadingFinished.encodedDataLength`
+  (bytes received, headers included) plus each request's line, headers and
+  body from `Network.requestWillBeSent`; Selenium reads the same CDP events
+  from chromedriver's performance log after each ticker. The figure is an
+  **estimate of the payload through the tunnel**: TLS, the CONNECT
+  exchange and connections the browser opens for itself are not visible to
+  the engines and add a few percent. Measured 2026-10-21 against a local
+  stub proxy that counted every byte it carried (a 60 kB page, a 30 kB
+  stylesheet, a 90 kB script): Playwright within 0.2%, pyppeteer 0.6%,
+  Selenium 0.7%. A megabyte here is 10^6 bytes. Nothing is metered without
+  a proxy, over `--cdp-endpoint` or with `--scraper-api`.
 
 Credentials belong in `.env` / `TIPRANKS_PROXY` / `TIPRANKS_CDP_ENDPOINT`
 / `TWOCAPTCHA_KEY` — never as literal `--proxy`/`--cdp-endpoint`/
@@ -237,8 +262,8 @@ Same exit codes across all three engines:
 | 2 | bad usage (no tickers given, robots.txt disallows a path, ...) |
 | 3 | blocked (a real 403/429, or the confirmed Cloudflare interstitial's own body/URL markers — see below) |
 | 4 | zero results (every ticker answered "not found") |
-| 5 | no rows obtained: navigation/network failure, a proxy that refused the credential or the balance before the run began (`stop_reason: proxy_auth_failed` / `proxy_balance_exhausted` in `<out>.latest_attempt.meta.json`), or a served payload the parser could not read (status `parser_failed`) |
-| 6 | partial (some tickers failed, others succeeded) |
+| 5 | no rows obtained: navigation/network failure, a proxy that refused the credential or the balance before the run began (`stop_reason: proxy_auth_failed` / `proxy_balance_exhausted` in `<out>.latest_attempt.meta.json`), the proxy budget spent before any rating (`stop_reason: proxy_budget_exceeded`), or a served payload the parser could not read (status `parser_failed`) |
+| 6 | partial (some tickers failed, others succeeded; or `--proxy-budget-mb` stopped the run, `stop_reason: proxy_budget_exceeded`) |
 
 A run where every requested ticker fails and none complete is `5`
 (remote API error) unless every one of those failures was specifically a

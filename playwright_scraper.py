@@ -49,6 +49,7 @@ from env_config import apply_env, int_between, non_negative_int
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run, finish_without_fetch
 import proxy_check
+import proxy_meter
 from proxy_pool import ProxyParseError, ProxyPool, is_proxy_dead_error, load_proxies, redact_credentials
 from scraper_api_client import TwoCaptchaAuthError, TwoCaptchaClient, TwoCaptchaError
 from tipranks_parser import (
@@ -289,6 +290,7 @@ def run(
     min_score: float = 0.3,
     block_retries: int = 0,
     block_media: bool = False,
+    meter: Optional["proxy_meter.ProxyMeter"] = None,
 ) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """Returns (ratings, tickers_completed, failed_tickers,
     blocked_tickers, parser_failed_tickers) — see the original docstring (still accurate) for
@@ -340,73 +342,88 @@ def run(
             context = page.context
             if block_media and not cdp_endpoint:
                 proxy_check.install_playwright(context)
+            # After the media route: Playwright runs routes in reverse
+            # order of registration, so the budget route decides first.
+            proxy_meter.install_playwright(context, meter)
             if cdp_endpoint:
                 _enable_scraping_browser_auto_solve(context, page)
 
             warned_last_proxy = False
-            for ticker in tickers:
-                rating = None
-                error_kind = None
-                # One paid-solve allowance per ticker, shared by every retry.
-                budget = SolveBudget()
-                for attempt in range(block_retries + 1):
-                    rating, error_kind = fetch_one(page, ticker)
-                    while error_kind == "proxy_dead":
-                        replacement = proxy_pool.replace_dead(proxy) if proxy_pool and proxy else None
-                        if replacement is None:
-                            if not warned_last_proxy:
-                                log.warning(
-                                    "Cannot get through proxy %s and there is no other proxy to switch to.",
-                                    proxy.masked() if proxy else "(none)",
-                                )
-                                warned_last_proxy = True
-                            error_kind = "remote_api_error"
-                            break
-                        log.warning("Proxy %s is dead — switching to %s.", proxy.masked(), replacement.masked())
-                        browser.close()
-                        proxy = replacement
-                        browser = _launch(pw, headless=headless, executable_path=executable_path, proxy=proxy)
-                        page = browser.new_page(user_agent=user_agent) if user_agent else browser.new_page()
-                        if block_media:
-                            proxy_check.install_playwright(page.context)
+            try:
+                for ticker in tickers:
+                    rating = None
+                    error_kind = None
+                    # One paid-solve allowance per ticker, shared by every retry.
+                    budget = SolveBudget()
+                    for attempt in range(block_retries + 1):
+                        if meter is not None:
+                            meter.check()
                         rating, error_kind = fetch_one(page, ticker)
-                    if error_kind != "blocked":
-                        break
-                    # Over --cdp-endpoint, 2Captcha's own auto-solve (armed
-                    # above) already had its chance inside fetch_one()'s
-                    # own navigation — a second, LOCAL solve attempt here
-                    # would be redundant (captcha_solver.py's own module
-                    # docstring: "over --cdp-endpoint, none of this
-                    # applies").
-                    # Only solve when a retry follows: a token bought on the
-                    # last attempt would never be used.
-                    if client is not None and not cdp_endpoint and attempt < block_retries:
-                        _maybe_solve_captcha(
-                            client=client, page=page, ticker=ticker,
-                            policy=solve_captcha_policy, min_score=min_score,
-                            budget=budget,
-                        )
-                    if attempt < block_retries:
-                        log.warning(
-                            "Blocked fetching %s (attempt %d/%d) — retrying on the same session.",
-                            ticker, attempt + 1, block_retries + 1,
-                        )
-                if error_kind == "blocked":
-                    failed.append(ticker)
-                    blocked.append(ticker)
-                    continue
-                if error_kind == "remote_api_error":
-                    failed.append(ticker)
-                    continue
-                if error_kind == "parser_failed":
-                    failed.append(ticker)
-                    parser_failed.append(ticker)
-                    continue
-                completed.append(ticker)
-                if rating is not None:
-                    ratings.append(rating)
-                # error_kind == "not_found" is a completed (not failed)
-                # ticker with zero rows contributed — unchanged.
+                        while error_kind == "proxy_dead":
+                            replacement = proxy_pool.replace_dead(proxy) if proxy_pool and proxy else None
+                            if replacement is None:
+                                if not warned_last_proxy:
+                                    log.warning(
+                                        "Cannot get through proxy %s and there is no other proxy to switch to.",
+                                        proxy.masked() if proxy else "(none)",
+                                    )
+                                    warned_last_proxy = True
+                                error_kind = "remote_api_error"
+                                break
+                            log.warning("Proxy %s is dead — switching to %s.", proxy.masked(), replacement.masked())
+                            browser.close()
+                            proxy = replacement
+                            browser = _launch(pw, headless=headless, executable_path=executable_path, proxy=proxy)
+                            page = browser.new_page(user_agent=user_agent) if user_agent else browser.new_page()
+                            if block_media:
+                                proxy_check.install_playwright(page.context)
+                            proxy_meter.install_playwright(page.context, meter)
+                            if meter is not None:
+                                meter.check()
+                            rating, error_kind = fetch_one(page, ticker)
+                        if error_kind != "blocked":
+                            break
+                        # Over --cdp-endpoint, 2Captcha's own auto-solve (armed
+                        # above) already had its chance inside fetch_one()'s
+                        # own navigation — a second, LOCAL solve attempt here
+                        # would be redundant (captcha_solver.py's own module
+                        # docstring: "over --cdp-endpoint, none of this
+                        # applies").
+                        # Only solve when a retry follows: a token bought on the
+                        # last attempt would never be used.
+                        if client is not None and not cdp_endpoint and attempt < block_retries:
+                            _maybe_solve_captcha(
+                                client=client, page=page, ticker=ticker,
+                                policy=solve_captcha_policy, min_score=min_score,
+                                budget=budget,
+                            )
+                        if attempt < block_retries:
+                            log.warning(
+                                "Blocked fetching %s (attempt %d/%d) — retrying on the same session.",
+                                ticker, attempt + 1, block_retries + 1,
+                            )
+                    if error_kind == "blocked":
+                        failed.append(ticker)
+                        blocked.append(ticker)
+                        continue
+                    if error_kind == "remote_api_error":
+                        failed.append(ticker)
+                        continue
+                    if error_kind == "parser_failed":
+                        failed.append(ticker)
+                        parser_failed.append(ticker)
+                        continue
+                    completed.append(ticker)
+                    if rating is not None:
+                        ratings.append(rating)
+                    # error_kind == "not_found" is a completed (not failed)
+                    # ticker with zero rows contributed — unchanged.
+            except proxy_meter.ProxyBudgetExceeded as exc:
+                # Every ticker not yet done is unattempted: its data was not
+                # obtained, so it counts as failed, and main() reports the run
+                # as stopped by the proxy budget.
+                log.error("Stopping: %s. The ratings already gathered are kept.", exc)
+                failed.extend(t for t in tickers if t not in completed and t not in failed)
         finally:
             browser.close()
 
@@ -494,6 +511,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--proxy-file", default=None, help="One proxy per line, same formats as --proxy")
     parser.add_argument("--proxy-shuffle", action="store_true")
     proxy_check.add_media_flags(parser)
+    proxy_meter.add_budget_flag(parser)
     parser.add_argument("--twocaptcha-key", default=None, help="(or set TWOCAPTCHA_KEY)")
     parser.add_argument("--captcha-api", default=None, help="Override the 2Captcha API base URL (testing only)")
     parser.add_argument(
@@ -566,6 +584,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return EXIT_BAD_USAGE
 
     started_at = time.time()
+    meter = None
 
     if args.scraper_api:
         if not args.twocaptcha_key:
@@ -627,6 +646,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 args.out, stop_reason=refused.stop_reason, engine="playwright",
                 tickers_requested=tickers, started_at=started_at)
         block_media = proxy_check.block_media(args, pool, remote=bool(args.cdp_endpoint))
+        meter = proxy_meter.start(args, pool, remote=bool(args.cdp_endpoint))
 
 
         captcha_client = None
@@ -656,6 +676,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 min_score=args.min_score,
                 block_retries=args.block_retries,
                 block_media=block_media,
+                meter=meter,
             )
         except Exception as exc:  # a real crash, not a per-ticker failure
             print(f"crash: {exc}", file=sys.stderr)
@@ -679,6 +700,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
         allow_empty=args.allow_empty,
         started_at=started_at,
+        extra_meta=proxy_meter.finish(args, None),
+        budget_exceeded=bool(meter is not None and meter.exceeded),
     )
 
 
