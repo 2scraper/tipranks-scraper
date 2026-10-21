@@ -237,7 +237,7 @@ paying for bytes it does not use:
   request; pyppeteer reads CDP `Network.loadingFinished.encodedDataLength`
   (bytes received, headers included) plus each request's line, headers and
   body from `Network.requestWillBeSent`; Selenium reads the same CDP events
-  from chromedriver's performance log after each ticker. The figure is an
+  from chromedriver's performance log after each ticker. Only `http(s)` requests and responses that came over the network are counted: Chrome's own `chrome://`, `data:` and `blob:` loads, cache hits and Chrome's error page count nothing. The figure is an
   **estimate of the payload through the tunnel**: TLS, the CONNECT
   exchange and connections the browser opens for itself are not visible to
   the engines and add a few percent. Measured 2026-10-21 against a local

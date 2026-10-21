@@ -62,6 +62,10 @@ All notable changes to this project are documented here. Format follows
 
 - The saved copy of tipranks.com's robots.txt is the one served on 2026-10-20. The site dropped four `/news/...` Disallow lines, anchored its two query-string rules at `/` (`/*?*s=`, `/*?*id=`), and added `/*?hash=` and `/*?llf=`. The two paths this scraper requests, `/stocks/{ticker}/stock-analysis` and its `payload.json`, have no query string and are allowed under both versions. The canary compares this copy with the live file, and it failed on the change.
 
+### Fixed
+
+- The pyppeteer and Selenium proxy meter counts only `http://` / `https://` requests and responses that came over the network. Chrome's own loads (the `chrome://` new-tab page, `data:`, `blob:`), cache hits (`requestServedFromCache`, `fromDiskCache`, `fromPrefetchCache`, `fromServiceWorker`) and Chrome's error page count nothing. A sibling repo's Selenium run had counted about 2.8 MB of new-tab scripts while its proxy carried about 6 KB. The pyppeteer block sent once the budget is spent now reaches the page's own event loop even when the budget runs out on another thread.
+
 ## [0.6.0] - 2026-10-20
 
 ### Added
