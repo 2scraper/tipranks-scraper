@@ -62,6 +62,7 @@ from env_config import apply_env, int_between, non_negative_int
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, finish_run, finish_without_fetch
 import proxy_check
+import proxy_meter
 from proxy_pool import Proxy, ProxyParseError, ProxyPool, is_proxy_dead_error, load_proxies, redact_credentials
 from scraper_api_client import TwoCaptchaAuthError, TwoCaptchaClient, TwoCaptchaError
 from tipranks_parser import (
@@ -241,6 +242,7 @@ def _make_driver(
     headless: bool, executable_path: Optional[str], *,
     proxy: Optional[Proxy] = None, cdp_endpoint: Optional[str] = None,
     user_agent: Optional[str] = None, block_media: bool = False,
+    meter: Optional["proxy_meter.ProxyMeter"] = None,
 ):
     options = Options()
     if headless:
@@ -272,7 +274,9 @@ def _make_driver(
             )
         options.add_argument(f"--proxy-server={proxy.server_only()}")
 
+    proxy_meter.selenium_options(options, meter)
     driver = webdriver.Chrome(options=options)
+    proxy_meter.install_selenium(driver, meter)
     if block_media:
         proxy_check.install_selenium(driver)
     return driver
@@ -290,6 +294,7 @@ def run(
     min_score: float = 0.3,
     block_retries: int = 0,
     block_media: bool = False,
+    meter: Optional["proxy_meter.ProxyMeter"] = None,
 ) -> Tuple[List[TickerRating], List[str], List[str], List[str], List[str]]:
     """Returns (ratings, tickers_completed, failed_tickers,
     blocked_tickers, parser_failed_tickers) — same contract as playwright_scraper.run(). See
@@ -309,7 +314,7 @@ def run(
     try:
         driver = _make_driver(
             headless, executable_path, proxy=proxy, cdp_endpoint=cdp_endpoint, user_agent=user_agent,
-            block_media=block_media,
+            block_media=block_media, meter=meter,
         )
     except Exception as exc:
         log.error(
@@ -320,60 +325,76 @@ def run(
 
     try:
         warned_last_proxy = False
-        for ticker in tickers:
-            rating = None
-            error_kind = None
-            # One paid-solve allowance per ticker, shared by every retry.
-            budget = SolveBudget()
-            for attempt in range(block_retries + 1):
-                rating, error_kind = fetch_one(driver, ticker)
-                while error_kind == "proxy_dead":
-                    replacement = proxy_pool.replace_dead(proxy) if proxy_pool and proxy else None
-                    if replacement is None:
-                        if not warned_last_proxy:
-                            log.warning(
-                                "Cannot get through proxy %s and there is no other proxy to switch to.",
-                                proxy.masked() if proxy else "(none)",
-                            )
-                            warned_last_proxy = True
-                        error_kind = "remote_api_error"
-                        break
-                    log.warning("Proxy %s is dead — switching to %s.", proxy.masked(), replacement.masked())
-                    driver.quit()
-                    proxy = replacement
-                    driver = _make_driver(headless, executable_path, proxy=proxy, user_agent=user_agent,
-                                          block_media=block_media)
+        try:
+            for ticker in tickers:
+                rating = None
+                error_kind = None
+                # One paid-solve allowance per ticker, shared by every retry.
+                budget = SolveBudget()
+                for attempt in range(block_retries + 1):
+                    proxy_meter.drain_selenium(driver)
+                    if meter is not None:
+                        meter.check()
                     rating, error_kind = fetch_one(driver, ticker)
-                if error_kind != "blocked":
-                    break
-                # Only solve when a retry follows: a token bought on the
-                # last attempt would never be used.
-                if client is not None and attempt < block_retries:
-                    _maybe_solve_captcha(
-                        client=client, driver=driver, ticker=ticker,
-                        policy=solve_captcha_policy, min_score=min_score,
-                        budget=budget,
-                    )
-                if attempt < block_retries:
-                    log.warning(
-                        "Blocked fetching %s (attempt %d/%d) — retrying on the same session.",
-                        ticker, attempt + 1, block_retries + 1,
-                    )
-            if error_kind == "blocked":
-                failed.append(ticker)
-                blocked.append(ticker)
-                continue
-            if error_kind == "remote_api_error":
-                failed.append(ticker)
-                continue
-            if error_kind == "parser_failed":
-                failed.append(ticker)
-                parser_failed.append(ticker)
-                continue
-            completed.append(ticker)
-            if rating is not None:
-                ratings.append(rating)
+                    while error_kind == "proxy_dead":
+                        replacement = proxy_pool.replace_dead(proxy) if proxy_pool and proxy else None
+                        if replacement is None:
+                            if not warned_last_proxy:
+                                log.warning(
+                                    "Cannot get through proxy %s and there is no other proxy to switch to.",
+                                    proxy.masked() if proxy else "(none)",
+                                )
+                                warned_last_proxy = True
+                            error_kind = "remote_api_error"
+                            break
+                        log.warning("Proxy %s is dead — switching to %s.", proxy.masked(), replacement.masked())
+                        proxy_meter.drain_selenium(driver)
+                        driver.quit()
+                        proxy = replacement
+                        driver = _make_driver(headless, executable_path, proxy=proxy, user_agent=user_agent,
+                                              block_media=block_media, meter=meter)
+                        proxy_meter.drain_selenium(driver)
+                        if meter is not None:
+                            meter.check()
+                        rating, error_kind = fetch_one(driver, ticker)
+                    if error_kind != "blocked":
+                        break
+                    # Only solve when a retry follows: a token bought on the
+                    # last attempt would never be used.
+                    if client is not None and attempt < block_retries:
+                        _maybe_solve_captcha(
+                            client=client, driver=driver, ticker=ticker,
+                            policy=solve_captcha_policy, min_score=min_score,
+                            budget=budget,
+                        )
+                    if attempt < block_retries:
+                        log.warning(
+                            "Blocked fetching %s (attempt %d/%d) — retrying on the same session.",
+                            ticker, attempt + 1, block_retries + 1,
+                        )
+                if error_kind == "blocked":
+                    failed.append(ticker)
+                    blocked.append(ticker)
+                    continue
+                if error_kind == "remote_api_error":
+                    failed.append(ticker)
+                    continue
+                if error_kind == "parser_failed":
+                    failed.append(ticker)
+                    parser_failed.append(ticker)
+                    continue
+                completed.append(ticker)
+                if rating is not None:
+                    ratings.append(rating)
+        except proxy_meter.ProxyBudgetExceeded as exc:
+            # Every ticker not yet done is unattempted: its data was not
+            # obtained, so it counts as failed, and main() reports the run
+            # as stopped by the proxy budget.
+            log.error("Stopping: %s. The ratings already gathered are kept.", exc)
+            failed.extend(t for t in tickers if t not in completed and t not in failed)
     finally:
+        # The last ticker's traffic is still in the performance log.
+        proxy_meter.drain_selenium(driver)
         driver.quit()
 
     return ratings, completed, failed, blocked, parser_failed
@@ -444,6 +465,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--proxy-file", default=None, help="One proxy per line, same formats as --proxy")
     parser.add_argument("--proxy-shuffle", action="store_true")
     proxy_check.add_media_flags(parser)
+    proxy_meter.add_budget_flag(parser)
     parser.add_argument("--twocaptcha-key", default=None, help="(or set TWOCAPTCHA_KEY)")
     parser.add_argument("--captcha-api", default=None, help="Override the 2Captcha API base URL (testing only)")
     parser.add_argument(
@@ -521,6 +543,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return EXIT_BAD_USAGE
 
     started_at = time.time()
+    meter = None
 
     if args.scraper_api:
         if not args.twocaptcha_key:
@@ -607,6 +630,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 args.out, stop_reason=refused.stop_reason, engine=ENGINE_NAME,
                 tickers_requested=tickers, started_at=started_at)
         block_media = proxy_check.block_media(args, pool, remote=bool(args.cdp_endpoint))
+        meter = proxy_meter.start(args, pool, remote=bool(args.cdp_endpoint))
 
         captcha_client = None
         if args.twocaptcha_key and (args.solve_captcha != "off" or args.fingerprint):
@@ -635,6 +659,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 min_score=args.min_score,
                 block_retries=args.block_retries,
                 block_media=block_media,
+                meter=meter,
             )
         except Exception as exc:
             print(f"crash: {exc}", file=sys.stderr)
@@ -655,6 +680,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
         allow_empty=args.allow_empty,
         started_at=started_at,
+        extra_meta=proxy_meter.finish(args, None),
+        budget_exceeded=bool(meter is not None and meter.exceeded),
     )
 
 

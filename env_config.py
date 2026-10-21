@@ -77,6 +77,8 @@ ENV_KEYS: Dict[str, str] = {
     "TIPRANKS_CDP_ENDPOINT": "cdp_endpoint",
     # "1" keeps images/video/fonts loading through a proxy (--load-media).
     "TIPRANKS_LOAD_MEDIA": "load_media",
+    # Proxy traffic cap per run in MB (--proxy-budget-mb); empty = 10.
+    "TIPRANKS_PROXY_BUDGET_MB": "proxy_budget_mb",
 }
 
 _PLACEHOLDER_RE = re.compile(r"^\s*$")

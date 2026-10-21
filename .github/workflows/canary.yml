@@ -46,8 +46,17 @@ jobs:
           # this job's env (env_config.py reads them); never on the command line.
           python3 playwright_scraper.py \
             --ticker AAPL --ticker MSFT --ticker GOOGL \
+            --proxy-budget-mb 10 \
             --format json --out canary_out.json --allow-empty
           echo "exit_code=$?" >> "$GITHUB_ENV"
+
+      - name: Proxy traffic of the live run
+        # Through TIPRANKS_PROXY the run meters what it sends and stops at
+        # --proxy-budget-mb 10. The figure goes in the step summary, and a
+        # run that hit the cap fails here. Over TIPRANKS_CDP_ENDPOINT there
+        # is no local proxy and it says "not metered".
+        if: ${{ !cancelled() }}
+        run: python3 .github/proxy_traffic.py "canary-live" canary_out.json
 
       - name: Require real, parsed rows
         run: |
@@ -127,8 +136,15 @@ jobs:
           set +e
           python3 playwright_scraper.py \
             --ticker AAPL --ticker MSFT --ticker GOOGL \
+            --proxy-budget-mb 10 \
             --format json --out canary_dc.json --allow-empty
           echo "exit_code=$?" >> "$GITHUB_ENV"
+
+      - name: Proxy traffic of the datacentre run
+        # No proxy on this job, so this reports "not metered"; kept so a
+        # proxy added here later is reported and capped like the live run.
+        if: ${{ !cancelled() }}
+        run: python3 .github/proxy_traffic.py "canary-datacentre" canary_dc.json
 
       - name: Classify the result
         run: |

@@ -14,8 +14,31 @@ All notable changes to this project are documented here. Format follows
 > (2) Through a local proxy, images, video/audio and fonts are **no longer
 > downloaded**; `--load-media` (or `TIPRANKS_LOAD_MEDIA=1`) restores them.
 > Runs without a proxy or over `--cdp-endpoint` are unchanged.
+> (3) A run through a local proxy now **stops at 10 MB of proxy traffic** by
+> default (`--proxy-budget-mb`, `0` = no cap): it keeps its ratings and exits
+> **6** (**5** with none) with `stop_reason: proxy_budget_exceeded`, and it
+> always writes `<out>.latest_attempt.meta.json`.
 
 ### Added
+
+- `proxy_meter.py`: per-run proxy traffic meter and budget, in all three
+  engines, only through a local proxy. Playwright sums `request.sizes()`;
+  pyppeteer and Selenium count CDP `Network.loadingFinished.encodedDataLength`
+  plus each request's own size. Over budget, Playwright aborts new requests
+  in a route and pyppeteer/Selenium block every URL over CDP, and the run
+  stops before its next ticker. New sidecar fields `proxy_bytes`,
+  `proxy_budget_bytes`, `proxy_budget_exceeded`; a closing log line
+  `Proxy traffic: X.X MB of Y MB budget`. `--proxy-budget-mb` and
+  `TIPRANKS_PROXY_BUDGET_MB` (in `.env.example`).
+- CI only: both canary runs pass `--proxy-budget-mb 10` and write their
+  proxy traffic to the step summary; a run that hit the cap fails with
+  `::error::stopped: proxy budget 10 MB exceeded` (`.github/proxy_traffic.py`).
+- Offline checks: the meter against known CDP and Playwright sizes, an HTTP
+  client through a byte-counting stub proxy, the sidecars and exit codes
+  over budget, each engine's `run()` loop stopping before the next ticker,
+  `main()` metering only through a local proxy, the canary steps and their
+  summary script. An opt-in real-browser check (`PROXY_METER_BROWSER=1`)
+  compares each driver's count with a stub proxy's.
 
 - `proxy_check.py`: the proxy pre-check (one CONNECT plus `HEAD /robots.txt`
   on www.tipranks.com, no third-party service) and media blocking for all

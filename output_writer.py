@@ -162,6 +162,7 @@ def write_meta(
     finished_at: Optional[float] = None,
     extra: Optional[dict] = None,
     output_sha256: Optional[str] = None,
+    path: Optional[str] = None,
 ) -> None:
     meta = {
         "status": status,
@@ -179,7 +180,8 @@ def write_meta(
     if extra:
         meta.update(extra)
     _atomic_write_text(
-        meta_path_for(out_path), json.dumps(meta, ensure_ascii=False, indent=2)
+        path or meta_path_for(out_path),
+        json.dumps(meta, ensure_ascii=False, indent=2)
     )
 
 
@@ -239,6 +241,7 @@ def finish_run(
     started_at: float,
     extra_meta: Optional[dict] = None,
     parser_failed_tickers: Optional[List[str]] = None,
+    budget_exceeded: bool = False,
 ) -> int:
     """Same outcome precedence as the rest of the family:
     remote_api_error > blocked > zero_products > partial > complete,
@@ -276,7 +279,15 @@ def finish_run(
     neither "the ticker does not exist" nor a network failure. They count
     as failed, so a run of nothing else exits 5 with status
     `parser_failed`, and a run with other rows exits 6 (partial). They are
-    listed in the sidecar either way."""
+    listed in the sidecar either way.
+
+    `budget_exceeded` (the run went over `--proxy-budget-mb`) outranks
+    everything: the run stopped itself, so what it holds is partial (exit
+    6) or nothing (exit 5), with `stop_reason: proxy_budget_exceeded`, and
+    no other reading of the ticker lists applies. A metered run (its
+    `extra_meta` carries `proxy_bytes`) also writes
+    `<out>.latest_attempt.meta.json` every time, so a run that wrote no
+    file still records what it spent through the proxy."""
     failed_tickers = failed_tickers or []
     parser_failed_tickers = [t for t in (parser_failed_tickers or []) if t in failed_tickers]
     partial = bool(failed_tickers) and bool(tickers_completed)
@@ -284,7 +295,12 @@ def finish_run(
     total_failure = bool(failed_tickers) and not tickers_completed
     remote_api_error = remote_api_error or (total_failure and not blocked)
 
-    if remote_api_error:
+    stop_reason = None
+    if budget_exceeded:
+        stop_reason = "proxy_budget_exceeded"
+        status, exit_code = (("partial", EXIT_PARTIAL) if ratings
+                             else ("failed", EXIT_REMOTE_API_ERROR))
+    elif remote_api_error:
         status, exit_code = "remote_api_error", EXIT_REMOTE_API_ERROR
         if parser_failed_tickers and set(parser_failed_tickers) == set(failed_tickers):
             status = "parser_failed"
@@ -297,7 +313,18 @@ def finish_run(
     else:
         status, exit_code = "complete", EXIT_OK
 
+    metered = bool(extra_meta) and "proxy_bytes" in extra_meta
     if zero_products and not allow_empty:
+        if metered:
+            write_meta(
+                out_path, status=status, stop_reason=stop_reason or status,
+                engine=engine, tickers_requested=tickers_requested,
+                tickers_completed=tickers_completed,
+                failed_tickers=failed_tickers, rating_count=0,
+                started_at=started_at,
+                extra={"parser_failed_tickers": parser_failed_tickers,
+                       **extra_meta},
+                path=out_path + ATTEMPT_META_SUFFIX)
         return exit_code
 
     csv_cells_escaped = write_output(ratings, out_path, fmt)
@@ -308,10 +335,19 @@ def finish_run(
         "parser_failed_tickers": parser_failed_tickers,
     }
     meta_extra.update(extra_meta or {})
+    if metered:
+        write_meta(
+            out_path, status=status, stop_reason=stop_reason or status,
+            engine=engine, tickers_requested=tickers_requested,
+            tickers_completed=tickers_completed,
+            failed_tickers=failed_tickers, rating_count=len(ratings),
+            started_at=started_at, extra=meta_extra,
+            output_sha256=output_sha256,
+            path=out_path + ATTEMPT_META_SUFFIX)
     write_meta(
         out_path,
         status=status,
-        stop_reason=status,
+        stop_reason=stop_reason or status,
         engine=engine,
         tickers_requested=tickers_requested,
         tickers_completed=tickers_completed,
