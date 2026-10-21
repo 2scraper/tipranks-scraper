@@ -292,46 +292,88 @@ def _request_estimate(request: dict) -> int:
 class CdpCounter:
     """Turns CDP Network events into bytes on a meter.
 
-    A request is counted when it ends: `loadingFinished` adds the request
-    estimate plus `encodedDataLength` (every byte received for it, headers
-    included); `loadingFailed` adds the request estimate plus whatever
-    `dataReceived` had already delivered — unless the browser itself
-    blocked it (media blocking, the budget's own block), in which case
-    nothing left the machine. A redirect hop adds its own response's
-    `encodedDataLength` and its own request.
+    Only what crossed the network is counted:
+
+    * a request is counted only for an `http://` / `https://` URL. The
+      browser's own loads (`chrome://` new-tab page scripts, `data:`,
+      `blob:`, extensions) never reach the proxy; measured on a sibling
+      repo's Selenium run, the new-tab page alone was ~2.8 MB of
+      `loadingFinished` events while the proxy carried ~6 KB;
+    * response bytes are counted only after a `responseReceived` that came
+      over the network: not a cache hit (`fromDiskCache`,
+      `fromPrefetchCache`, `fromServiceWorker`, or a
+      `requestServedFromCache` event, which also cancels the request's
+      own estimate), and not Chrome's own error page, which is reported as
+      a finished load of the failed URL with no `responseReceived`.
+
+    `loadingFinished` then adds the request estimate plus
+    `encodedDataLength` (every byte received, headers included);
+    `loadingFailed` adds the request estimate plus what `dataReceived` had
+    delivered, unless the browser blocked the request itself (media
+    blocking, the budget's own block). A redirect hop adds its own
+    request and its response's `encodedDataLength`.
     """
 
     def __init__(self, meter: ProxyMeter):
         self.meter = meter
         self._req: Dict[str, int] = {}
         self._recv: Dict[str, int] = {}
+        self._responded: Dict[str, bool] = {}
+
+    @staticmethod
+    def _network(url) -> bool:
+        return str(url or "").startswith(("http://", "https://"))
 
     def feed(self, method: str, params: dict) -> None:
+        if not isinstance(params, dict):
+            return
         rid = params.get("requestId")
         if method == "Network.requestWillBeSent":
             redirect = params.get("redirectResponse")
             if redirect and rid in self._req:
                 self.meter.add(self._req.pop(rid, 0)
                                + int(redirect.get("encodedDataLength") or 0))
-                self._recv.pop(rid, None)
-            self._req[rid] = _request_estimate(params.get("request") or {})
+            self._recv.pop(rid, None)
+            self._responded.pop(rid, None)
+            request = params.get("request") or {}
+            if self._network(request.get("url")):
+                self._req[rid] = _request_estimate(request)
+            else:
+                self._req.pop(rid, None)
+        elif method == "Network.requestServedFromCache":
+            self._req.pop(rid, None)
+            self._responded[rid] = False
+        elif method == "Network.responseReceived":
+            response = params.get("response") or {}
+            cached = (response.get("fromDiskCache")
+                      or response.get("fromPrefetchCache")
+                      or response.get("fromServiceWorker"))
+            if cached:
+                self._req.pop(rid, None)
+            if self._responded.get(rid) is not False:
+                self._responded[rid] = bool(
+                    self._network(response.get("url")) and not cached)
         elif method == "Network.dataReceived":
-            self._recv[rid] = (self._recv.get(rid, 0)
-                               + int(params.get("encodedDataLength") or 0))
+            if self._responded.get(rid):
+                self._recv[rid] = (self._recv.get(rid, 0)
+                                   + int(params.get("encodedDataLength") or 0))
         elif method == "Network.loadingFinished":
-            got = int(params.get("encodedDataLength") or 0)
-            self.meter.add(self._req.pop(rid, 0)
-                           + max(got, self._recv.pop(rid, 0)))
+            got = (int(params.get("encodedDataLength") or 0)
+                   if self._responded.pop(rid, False) else 0)
+            sent = self._req.pop(rid, 0)
+            self.meter.add(sent + max(got, self._recv.pop(rid, 0)))
         elif method == "Network.loadingFailed":
             sent = self._req.pop(rid, 0)
             got = self._recv.pop(rid, 0)
+            self._responded.pop(rid, None)
             if params.get("blockedReason") or "BLOCKED_BY_CLIENT" in str(
                     params.get("errorText", "")):
                 return
             self.meter.add(sent + got)
 
 
-EVENTS = ("Network.requestWillBeSent", "Network.dataReceived",
+EVENTS = ("Network.requestWillBeSent", "Network.requestServedFromCache",
+          "Network.responseReceived", "Network.dataReceived",
           "Network.loadingFinished", "Network.loadingFailed")
 
 
@@ -347,9 +389,19 @@ async def install_pyppeteer(page, meter: Optional[ProxyMeter]) -> None:
         session.on(name, (lambda n: lambda params: counter.feed(n, params))(name))
     await session.send("Network.enable", {})
 
+    # The budget can trip on another thread (a concurrent worker, or a
+    # thread that drains another engine's events) that has no event loop of
+    # its own: hand the block to the loop this page runs on.
+    loop = asyncio.get_event_loop()
+
+    async def _send_block():
+        try:
+            await session.send("Network.setBlockedURLs", {"urls": ["*"]})
+        except Exception:  # noqa: BLE001 — the next navigation's check still stops the run
+            pass
+
     def _block():
-        asyncio.ensure_future(session.send("Network.setBlockedURLs",
-                                           {"urls": ["*"]}))
+        loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_send_block()))
     meter.on_exceed(_block)
 
 

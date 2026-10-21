@@ -2581,7 +2581,13 @@ def test_proxy_meter_units(skips):
     c = proxy_meter.CdpCounter(m)
     req = {"method": "GET", "url": "http://x.test/a", "headers": {"A": "b"}}
     est = len("GET http://x.test/a HTTP/1.1\r\n") + 2 + len("A: b\r\n")
+
+    def _resp(rid, **extra):
+        return {"requestId": rid,
+                "response": dict({"url": "http://x.test/a", "status": 200},
+                                 **extra)}
     c.feed("Network.requestWillBeSent", {"requestId": "1", "request": req})
+    c.feed("Network.responseReceived", _resp("1"))
     c.feed("Network.dataReceived", {"requestId": "1", "encodedDataLength": 99})
     c.feed("Network.loadingFinished", {"requestId": "1",
                                        "encodedDataLength": 1234})
@@ -2596,6 +2602,7 @@ def test_proxy_meter_units(skips):
     ok &= _mc("CDP: a request the browser blocked costs nothing",
                 m.bytes == est + 1234)
     c.feed("Network.requestWillBeSent", {"requestId": "3", "request": req})
+    c.feed("Network.responseReceived", _resp("3"))
     c.feed("Network.dataReceived", {"requestId": "3", "encodedDataLength": 50})
     c.feed("Network.loadingFailed", {"requestId": "3",
                                      "errorText": "net::ERR_CONNECTION_RESET"})
@@ -2605,10 +2612,51 @@ def test_proxy_meter_units(skips):
     c.feed("Network.requestWillBeSent", {
         "requestId": "4", "request": req,
         "redirectResponse": {"encodedDataLength": 300}})
+    c.feed("Network.responseReceived", _resp("4"))
     c.feed("Network.loadingFinished", {"requestId": "4",
                                        "encodedDataLength": 500})
     ok &= _mc("CDP: a redirect hop is counted as its own exchange",
                 m.bytes == 4 * est + 1234 + 50 + 300 + 500)
+
+    # Only what crossed the network. A sibling repo's Selenium run counted
+    # Chrome's own new-tab page (chrome:// scripts, ~2.8 MB of
+    # loadingFinished) while its proxy carried ~6 KB.
+    before = m.bytes
+    tab = {"method": "GET", "url": "chrome://new-tab-page/x.js",
+           "headers": {"A": "b"}}
+    c.feed("Network.requestWillBeSent", {"requestId": "t", "request": tab})
+    c.feed("Network.responseReceived", {"requestId": "t", "response": {
+        "url": "chrome://new-tab-page/x.js", "status": 200}})
+    c.feed("Network.dataReceived", {"requestId": "t",
+                                    "encodedDataLength": 2_779_683})
+    c.feed("Network.loadingFinished", {"requestId": "t",
+                                       "encodedDataLength": 2_779_683})
+    for scheme_url in ("data:text/plain,x", "blob:http://x.test/1"):
+        c.feed("Network.requestWillBeSent", {"requestId": scheme_url,
+               "request": dict(req, url=scheme_url)})
+        c.feed("Network.loadingFinished", {"requestId": scheme_url,
+                                           "encodedDataLength": 900})
+    ok &= _mc(f"CDP: a chrome:// new-tab load, data: and blob: cost nothing "
+                f"({m.bytes - before} B)", m.bytes == before)
+    c.feed("Network.requestWillBeSent", {"requestId": "k1", "request": req})
+    c.feed("Network.requestServedFromCache", {"requestId": "k1"})
+    c.feed("Network.responseReceived", _resp("k1"))
+    c.feed("Network.loadingFinished", {"requestId": "k1",
+                                       "encodedDataLength": 5000})
+    for flag in ("fromDiskCache", "fromPrefetchCache", "fromServiceWorker"):
+        c.feed("Network.requestWillBeSent", {"requestId": flag, "request": req})
+        c.feed("Network.responseReceived", _resp(flag, **{flag: True}))
+        c.feed("Network.loadingFinished", {"requestId": flag,
+                                           "encodedDataLength": 5000})
+    ok &= _mc(f"CDP: a cache hit (requestServedFromCache, fromDiskCache, "
+                f"fromPrefetchCache, fromServiceWorker) costs nothing "
+                f"({m.bytes - before} B)", m.bytes == before)
+    c.feed("Network.requestWillBeSent", {"requestId": "e", "request": req})
+    c.feed("Network.loadingFinished", {"requestId": "e",
+                                       "encodedDataLength": 250_000})
+    ok &= _mc(f"CDP: Chrome's own error page (no responseReceived) costs only "
+                f"the request that was attempted ({m.bytes - before} B)",
+                m.bytes - before == est)
 
     # -- Playwright: sizes() of every finished/failed request ---------------
     m = proxy_meter.ProxyMeter(0.001)
@@ -2649,6 +2697,8 @@ def test_proxy_meter_units(skips):
         "method": "Network.requestWillBeSent",
         "params": {"requestId": "9", "request": req}}})},
         {"message": json.dumps({"message": {
+            "method": "Network.responseReceived", "params": _resp("9")}})},
+        {"message": json.dumps({"message": {
             "method": "Network.loadingFinished",
             "params": {"requestId": "9", "encodedDataLength": 2000}}})},
         {"message": "not json"}]
@@ -2679,6 +2729,7 @@ def test_proxy_meter_units(skips):
         await proxy_meter.install_pyppeteer(page, m)
         on = {call[0][0]: call[0][1] for call in cdp.on.call_args_list}
         on["Network.requestWillBeSent"]({"requestId": "p", "request": req})
+        on["Network.responseReceived"](_resp("p"))
         on["Network.loadingFinished"]({"requestId": "p",
                                        "encodedDataLength": 1500})
         await asyncio.sleep(0)
@@ -2690,6 +2741,32 @@ def test_proxy_meter_units(skips):
                 and ("Network.enable", {}) in sent)
     ok &= _mc("pyppeteer: over budget, every URL is blocked over CDP",
                 ("Network.setBlockedURLs", {"urls": ["*"]}) in sent)
+
+    # The cap can be crossed on another thread (a concurrent worker) that has
+    # no event loop: the block must still reach this page's own loop.
+    import threading
+    m = proxy_meter.ProxyMeter(0.001)
+    cdp = mock.MagicMock()
+    cdp.send = mock.AsyncMock()
+    page = mock.MagicMock()
+    page.target.createCDPSession = mock.AsyncMock(return_value=cdp)
+    crossed = []
+
+    async def _drive_threaded():
+        await proxy_meter.install_pyppeteer(page, m)
+        worker = threading.Thread(target=lambda: crossed.append(
+            _base_exception(lambda: m.add(5_000))))
+        worker.start()
+        worker.join()
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    asyncio.run(_drive_threaded())
+    sent = [call[0] for call in cdp.send.await_args_list]
+    ok &= _mc(f"pyppeteer: a budget crossed on a worker thread still "
+                f"blocks every URL on the page's loop (thread raised "
+                f"{crossed})", crossed == [None]
+                and ("Network.setBlockedURLs", {"urls": ["*"]}) in sent)
 
     # -- an HTTP client, through a real stub proxy with known sizes ---------
     import requests
