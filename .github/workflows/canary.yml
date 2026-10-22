@@ -12,29 +12,44 @@ jobs:
   # The canary that must prove the site still serves real rows. A GitHub
   # runner's datacentre IP gets Cloudflare's 403 "Just a moment..." page
   # from tipranks.com (every scheduled run from 2026-10-01 to 2026-10-15
-  # ended blocked with 0 rows), so this job needs a different exit: the
-  # TIPRANKS_PROXY secret (a residential proxy URL) or the
-  # TIPRANKS_CDP_ENDPOINT secret (a Scraping Browser connection string).
-  # Without either, it FAILS with an error naming them: a canary that
-  # never reached the site is not a passing canary. Blocked (3), no rows
-  # obtained (5), partial (6), empty (4) or zero ratings are all red.
+  # ended blocked with 0 rows), so this job needs a different exit, chosen
+  # by .github/canary_endpoint.py in this order:
+  #   1. secret TWOCAPTCHA_KEY + repository variable
+  #      TIPRANKS_BROWSER_ACCOUNT_ID: that browser account's connectionUri,
+  #      fetched fresh from GET /browser/accounts right before the run. A
+  #      stored connection string does not last: the one in the secret was
+  #      accepted on 2026-10-19 and 10-20 and refused with 401 deny_no_user
+  #      on 2026-10-21;
+  #   2. the TIPRANKS_CDP_ENDPOINT secret (a stored connection string);
+  #   3. the TIPRANKS_PROXY secret (a residential proxy URL).
+  # The endpoint goes into .env (mode 0600, never uploaded), never onto a
+  # command line or into the log. With none of them usable, the job FAILS
+  # with an error naming them: a canary that never reached the site is not
+  # a passing canary. Blocked (3), no rows obtained (5), partial (6),
+  # empty (4) or zero ratings are all red.
   canary-live:
     runs-on: ubuntu-latest
     env:
       TIPRANKS_PROXY: ${{ secrets.TIPRANKS_PROXY }}
-      TIPRANKS_CDP_ENDPOINT: ${{ secrets.TIPRANKS_CDP_ENDPOINT }}
     steps:
-      - name: Require a secret that can reach the site
-        run: |
-          if [ -z "$TIPRANKS_PROXY" ] && [ -z "$TIPRANKS_CDP_ENDPOINT" ]; then
-            echo "::error::canary NOT RUN: neither the TIPRANKS_PROXY nor the TIPRANKS_CDP_ENDPOINT repository secret is set. A GitHub runner's own IP is refused by tipranks.com, so without one this canary cannot test the live site."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Choose the exit (fresh Scraping Browser endpoint, stored one, or proxy)
+        id: endpoint
+        # The key and the stored endpoint are scoped to this step only. The
+        # key rides in the API's query string; tools/browser_endpoint.py
+        # redacts it from every error and prints the API's errorCode.
+        env:
+          TWOCAPTCHA_KEY: ${{ secrets.TWOCAPTCHA_KEY }}
+          ACCOUNT_ID: ${{ vars.TIPRANKS_BROWSER_ACCOUNT_ID }}
+          STORED_CDP_ENDPOINT: ${{ secrets.TIPRANKS_CDP_ENDPOINT }}
+        run: |
+          umask 077
+          python3 .github/canary_endpoint.py
+
       - run: |
           pip install -r requirements-playwright.txt
           playwright install --with-deps chromium
@@ -42,8 +57,9 @@ jobs:
       - name: Scrape a handful of real tickers (through the secret's exit)
         run: |
           set +e
-          # TIPRANKS_PROXY / TIPRANKS_CDP_ENDPOINT reach the scraper through
-          # this job's env (env_config.py reads them); never on the command line.
+          # TIPRANKS_PROXY reaches the scraper through this job's env and
+          # TIPRANKS_CDP_ENDPOINT through .env (env_config.py reads both);
+          # never on the command line. A CDP endpoint takes precedence.
           python3 playwright_scraper.py \
             --ticker AAPL --ticker MSFT --ticker GOOGL \
             --proxy-budget-mb 10 \
@@ -53,8 +69,8 @@ jobs:
       - name: Proxy traffic of the live run
         # Through TIPRANKS_PROXY the run meters what it sends and stops at
         # --proxy-budget-mb 10. The figure goes in the step summary, and a
-        # run that hit the cap fails here. Over TIPRANKS_CDP_ENDPOINT there
-        # is no local proxy and it says "not metered".
+        # run that hit the cap fails here. Over a CDP endpoint there is no
+        # local proxy and it says "not metered".
         if: ${{ !cancelled() }}
         run: python3 .github/proxy_traffic.py "canary-live" canary_out.json
 

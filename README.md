@@ -326,12 +326,43 @@ the same environment had already completed successfully — a behavior-
 triggered challenge, not a first-request block. The scraper reports that
 as exit 3. GitHub Actions' own datacentre IPs are refused the same way:
 every scheduled canary run from 2026-10-01 to 2026-10-15 ended blocked
-with 0 rows. The canary's `canary-live` job therefore runs through the
-`TIPRANKS_PROXY` or `TIPRANKS_CDP_ENDPOINT` repository secret, weekly
-(Mondays) and on a manual dispatch, and is red
-unless it collects real, fully parsed rows; without either secret it
-fails with an error naming them. A separate `canary-datacentre` job keeps
-trying the runner's own IP and reports the expected refusal as a notice.
+with 0 rows. The canary's `canary-live` job therefore runs through a
+different exit, weekly (Mondays) and on a manual dispatch, and is red
+unless it collects real, fully parsed rows. It picks the exit in this
+order:
+
+1. **A fresh Scraping Browser endpoint.** This needs the `TWOCAPTCHA_KEY`
+   secret and the `TIPRANKS_BROWSER_ACCOUNT_ID` repository variable.
+   `tools/browser_endpoint.py` takes that browser account's current
+   `connectionUri` from `GET https://api.2captcha.com/browser/accounts`
+   right before the run. It prefers the profile's URI over the account's
+   own.
+2. **The `TIPRANKS_CDP_ENDPOINT` secret** (a stored connection string).
+3. **The `TIPRANKS_PROXY` secret.**
+
+A stored connection string does not last: the one in the secret was
+accepted on 2026-10-19 and 2026-10-20 and refused with `401 deny_no_user`
+on 2026-10-21.
+
+The job fails with an error naming what is missing in two cases:
+- none of the three is set;
+- the fresh fetch was configured but failed, and there is no stored
+  endpoint to fall back on.
+
+A separate `canary-datacentre` job keeps trying the runner's own IP and
+reports the expected refusal as a notice.
+
+`tools/browser_endpoint.py` works locally too:
+
+```bash
+python3 tools/browser_endpoint.py --account-id 1581
+```
+
+It reads `TWOCAPTCHA_KEY` from the environment or `.env`, never from
+`argv`. It writes `TIPRANKS_CDP_ENDPOINT` into `.env` (mode 0600) and
+prints only the scheme, host and port of the URI. The API takes the key in
+the query string, so every error message is redacted. On an HTTP error it prints the
+API's own `errorCode`.
 
 ## Engine notes
 

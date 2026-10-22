@@ -21,6 +21,38 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
+- `tools/browser_endpoint.py`: writes a 2Captcha browser account's current
+  `connectionUri` into `.env` as `TIPRANKS_CDP_ENDPOINT` (mode 0600).
+  - It reads it from `GET /browser/accounts`, and prefers the profile's URI
+    over the account's own.
+  - The key comes from `TWOCAPTCHA_KEY`, never from argv.
+  - Output shows only the URI's scheme, host and port.
+  - The key is redacted from every error, including the API's own text.
+  - An HTTP error prints the API's `errorCode`.
+  - Exit codes: 2 bad usage, 3 no such account, 4 API failure, 5 no usable
+    URI.
+- CI only: the `canary-live` job takes a fresh endpoint before each run.
+  - It does this when the `TWOCAPTCHA_KEY` secret and the
+    `TIPRANKS_BROWSER_ACCOUNT_ID` repository variable are both set.
+  - Otherwise it falls back to the `TIPRANKS_CDP_ENDPOINT` secret, then to
+    `TIPRANKS_PROXY`. A stored endpoint was refused with `401 deny_no_user`
+    about two days after it was set.
+  - The key, the variable and the stored endpoint reach only the step
+    that chooses the exit (`.github/canary_endpoint.py`), and the scrape
+    reads the endpoint from `.env`.
+  - The job fails, naming what is missing, when nothing is usable, or when
+    the configured fresh fetch failed with nothing stored to fall back on.
+  - Offline checks run against a stub API on 127.0.0.1:
+    - account found, with and without a profile;
+    - unknown account;
+    - HTTP 401 with an `errorCode`;
+    - an error status inside a 200;
+    - a transport error carrying the URL;
+    - missing key and malformed id;
+    - every path the exit chooser can take;
+    - the workflow wiring.
+
+    No path prints the key.
 - `proxy_meter.py`: per-run proxy traffic meter and budget, in all three
   engines, only through a local proxy. Playwright sums `request.sizes()`;
   pyppeteer and Selenium count CDP `Network.loadingFinished.encodedDataLength`
