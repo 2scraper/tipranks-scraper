@@ -137,8 +137,10 @@ cannot be provoked on demand and belongs to the scheduled canary.
 8. Grep the actual stdout/output files for anything unexpected — a credential should never leak into a log line or a `.meta.json` sidecar under a real failure, not just a simulated one — this matters more now than it did before 2026-09-28, since this repo has a real credential model today.
 9. `docker build -t tipranks-scraper .` then `docker run --rm tipranks-scraper --ticker AAPL` — confirm the entrypoint works and the image doesn't ship `tests/`/`smoke_test.py`.
 10. CI: this repo's `canary` workflow has two jobs. `canary-live` runs
-    through the `TIPRANKS_PROXY` or `TIPRANKS_CDP_ENDPOINT` repository
-    secret and is green only when all three tickers come back complete with
+    on a fresh Scraping Browser endpoint (secret `TWOCAPTCHA_KEY` plus
+    variable `TIPRANKS_BROWSER_ACCOUNT_ID`, fetched by
+    `tools/browser_endpoint.py`), else the `TIPRANKS_CDP_ENDPOINT` secret,
+    else the `TIPRANKS_PROXY` secret, and is green only when all three tickers come back complete with
     company name, analyst count, consensus and price target present; a
     block, an empty or partial run, or a missing secret is red. (From
     2026-10-01 to 2026-10-15 every scheduled run from the bare runner was

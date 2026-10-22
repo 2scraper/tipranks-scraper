@@ -3043,6 +3043,238 @@ def test_canary_reports_proxy_traffic():
 
 
 
+# --- tools/browser_endpoint.py + .github/canary_endpoint.py ---------------
+# A stub of GET /browser/accounts on 127.0.0.1. No request leaves the
+# machine and no key, real or fake, is sent to a 2Captcha host.
+_BE_KEY = "k" * 8 + "0123456789abcdef" + "Z" * 8
+_BE_PW = "pw" + "Secret" + "9"
+_BE_PROFILE_URI = "ws://acct-zone-scraping_browser-pid-77:" + _BE_PW + "@cb.2captcha.com:9222"
+_BE_ACCOUNT_URI = "ws://acct-zone-scraping_browser:" + _BE_PW + "@cb.2captcha.com:9222"
+
+
+def _be_stub(status=200, body=None):
+    """(base_url, seen_requests, stop) for a one-route stub server."""
+    import http.server
+    import threading
+
+    seen = []
+    payload = json.dumps(body if body is not None else {
+        "status": "OK",
+        "data": [
+            {"id": 1500, "login": "other", "connectionUri": "ws://o:x@cb.2captcha.com:9222"},
+            {"id": 1581, "login": "acct", "proxyMode": "our_proxy",
+             "connectionUri": _BE_ACCOUNT_URI,
+             "profile": {"profileId": 77, "connectionUri": _BE_PROFILE_URI}},
+            {"id": 1600, "login": "noprofile", "connectionUri": _BE_ACCOUNT_URI},
+        ]}).encode()
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen.append(self.path)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{srv.server_port}", seen, srv.shutdown
+
+
+def _be_run(account, status=200, body=None, key=_BE_KEY, opener=None, mask=False, env_text=None):
+    """Run the tool against the stub. Returns (rc, stdout+stderr, env_path, seen, tmpdir)."""
+    import contextlib
+    import io
+    sys.path.insert(0, str(ROOT / "tools"))
+    import browser_endpoint as be
+
+    base, seen, stop = _be_stub(status, body)
+    tmp = Path(tempfile.mkdtemp())
+    env_path = tmp / ".env"
+    if env_text is not None:
+        env_path.write_text(env_text, encoding="utf-8")
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            rc = be.run(account, env_path, github_mask=mask, base=base,
+                        opener=opener, out=out, key=key)
+    finally:
+        stop()
+    return rc, out.getvalue() + err.getvalue(), env_path, seen, tmp
+
+
+@check("browser_endpoint: the account's PROFILE connectionUri goes into .env (0600), only masked in the output, key never printed")
+def _():
+    rc, text, env_path, seen, _ = _be_run(
+        "1581", env_text="TIPRANKS_PROXY=\nTIPRANKS_CDP_ENDPOINT=ws://old:old@cb.2captcha.com:9222\n")
+    assert rc == 0, (rc, text)
+    assert len(seen) == 1 and seen[0].startswith("/browser/accounts?key="), seen
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    assert lines == ["TIPRANKS_PROXY=", "TIPRANKS_CDP_ENDPOINT=" + _BE_PROFILE_URI], lines
+    assert (env_path.stat().st_mode & 0o777) == 0o600, oct(env_path.stat().st_mode)
+    assert _BE_KEY not in text and _BE_PW not in text and "ws://***:***@cb.2captcha.com:9222" in text, text
+    assert "::add-mask::" not in text, "masks are only emitted with --github-mask"
+
+
+@check("browser_endpoint: an account without a profile uses its own connectionUri; a new .env is created 0600")
+def _():
+    rc, text, env_path, _, _ = _be_run("1600")
+    assert rc == 0, (rc, text)
+    assert env_path.read_text(encoding="utf-8") == "TIPRANKS_CDP_ENDPOINT=" + _BE_ACCOUNT_URI + "\n"
+    assert (env_path.stat().st_mode & 0o777) == 0o600
+
+
+@check("browser_endpoint: --github-mask registers the URI, login and password with the runner before anything else")
+def _():
+    rc, text, _, _, _ = _be_run("1581", mask=True)
+    assert rc == 0, (rc, text)
+    first = text.splitlines()[:3]
+    assert first == ["::add-mask::" + _BE_PROFILE_URI,
+                     "::add-mask::acct-zone-scraping_browser-pid-77",
+                     "::add-mask::" + _BE_PW], first
+    assert _BE_KEY not in text
+
+
+@check("browser_endpoint: an unknown account id exits 3, lists the ids, writes nothing, never prints the key")
+def _():
+    rc, text, env_path, _, _ = _be_run("999")
+    assert rc == 3, (rc, text)
+    assert "999" in text and "1500, 1581, 1600" in text, text
+    assert not env_path.exists() and _BE_KEY not in text
+
+
+@check("browser_endpoint: HTTP 4xx prints the API's errorCode (masked), not a bare status; key redacted even when echoed")
+def _():
+    rc, text, env_path, _, _ = _be_run("1581", status=401, body={
+        "errorId": 1, "errorCode": "ERROR_KEY_DOES_NOT_EXIST",
+        "errorDescription": "key " + _BE_KEY + " not found"})
+    assert rc == 4, (rc, text)
+    assert "HTTP 401" in text and "errorCode=ERROR_KEY_DOES_NOT_EXIST" in text, text
+    assert _BE_KEY not in text and not env_path.exists(), text
+
+
+@check("browser_endpoint: a 200 that carries an error status exits 4 with its errorCode")
+def _():
+    rc, text, _, _, _ = _be_run("1581", body={"status": "ERROR", "errorCode": "ERROR_ACCOUNT_NOT_FOUND"})
+    assert rc == 4 and "errorCode=ERROR_ACCOUNT_NOT_FOUND" in text, (rc, text)
+
+
+@check("browser_endpoint: a transport error whose text carries the request URL is redacted")
+def _():
+    import urllib.error
+
+    def opener(req, timeout=0):
+        raise urllib.error.URLError(f"connect failed for {req.full_url} (and key={_BE_KEY})")
+
+    rc, text, _, seen, _ = _be_run("1581", opener=opener)
+    assert rc == 4 and "URLError" in text, (rc, text)
+    assert _BE_KEY not in text and "key=***" in text, text
+    assert not seen
+
+
+@check("browser_endpoint: no key or a malformed account id exits 2 before any request")
+def _():
+    rc, text, _, seen, _ = _be_run("1581", key="")
+    assert rc == 2 and "TWOCAPTCHA_KEY" in text and not seen, (rc, text, seen)
+    rc, text, _, seen, _ = _be_run("15 81")
+    assert rc == 2 and "--account-id" in text and not seen, (rc, text, seen)
+
+
+def _ce(environ, status=200, body=None):
+    import contextlib
+    import io
+    sys.path.insert(0, str(ROOT / ".github"))
+    import canary_endpoint as ce
+
+    base, seen, stop = _be_stub(status, body)
+    tmp = Path(tempfile.mkdtemp())
+    env_path = tmp / ".env"
+    out, err = io.StringIO(), io.StringIO()
+    saved = os.environ.pop("GITHUB_OUTPUT", None)
+    try:
+        with contextlib.redirect_stderr(err):
+            rc = ce.choose(env_path, environ=environ, out=out, base=base)
+    finally:
+        stop()
+        if saved is not None:
+            os.environ["GITHUB_OUTPUT"] = saved
+    text = out.getvalue() + err.getvalue()
+    written = env_path.read_text(encoding="utf-8") if env_path.exists() else None
+    return rc, text, written, seen
+
+
+_STORED = "ws://stored:" + "st0red" + "@cb.2captcha.com:9222"
+
+
+@check("canary_endpoint: key + account id -> the fresh URI, not the stored secret")
+def _():
+    rc, text, written, seen = _ce({"TWOCAPTCHA_KEY": _BE_KEY, "ACCOUNT_ID": "1581",
+                                   "STORED_CDP_ENDPOINT": _STORED})
+    assert rc == 0 and written == "TIPRANKS_CDP_ENDPOINT=" + _BE_PROFILE_URI + "\n", (rc, text, written)
+    assert len(seen) == 1 and "fresh connectionUri of browser account 1581" in text
+    assert _BE_KEY not in text and "st0red" not in text
+
+
+@check("canary_endpoint: without the account variable -> the stored secret, with a notice naming what is missing")
+def _():
+    rc, text, written, seen = _ce({"TWOCAPTCHA_KEY": _BE_KEY, "STORED_CDP_ENDPOINT": _STORED})
+    assert rc == 0 and written == "TIPRANKS_CDP_ENDPOINT=" + _STORED + "\n" and not seen, (rc, text)
+    assert "repository variable TIPRANKS_BROWSER_ACCOUNT_ID not set" in text and "TWOCAPTCHA_KEY and" not in text
+    assert "st0red" not in text
+
+
+@check("canary_endpoint: a failed fresh fetch falls back to the stored secret with a warning")
+def _():
+    rc, text, written, _ = _ce({"TWOCAPTCHA_KEY": _BE_KEY, "ACCOUNT_ID": "1581",
+                                "STORED_CDP_ENDPOINT": _STORED}, status=403,
+                               body={"errorCode": "ERROR_ACCESS_DENIED"})
+    assert rc == 0 and written == "TIPRANKS_CDP_ENDPOINT=" + _STORED + "\n", (rc, text)
+    assert "::warning::" in text and "ERROR_ACCESS_DENIED" in text and _BE_KEY not in text
+
+
+@check("canary_endpoint: a failed fresh fetch with no stored secret is an ::error::, even with a proxy")
+def _():
+    rc, text, written, _ = _ce({"TWOCAPTCHA_KEY": _BE_KEY, "ACCOUNT_ID": "999",
+                                "TIPRANKS_PROXY": "http://u:p@h:1"})
+    assert rc == 1 and written is None and "::error::" in text, (rc, text)
+    assert "TIPRANKS_CDP_ENDPOINT" in text and _BE_KEY not in text
+
+
+@check("canary_endpoint: proxy only -> no .env, the run goes through TIPRANKS_PROXY")
+def _():
+    rc, text, written, seen = _ce({"TIPRANKS_PROXY": "http://u:p@h:1"})
+    assert rc == 0 and written is None and not seen and "TIPRANKS_PROXY" in text, (rc, text)
+
+
+@check("canary_endpoint: nothing usable -> ::error:: naming the key, the account variable, the CDP secret and the proxy secret")
+def _():
+    rc, text, written, seen = _ce({"TWOCAPTCHA_KEY": "", "ACCOUNT_ID": " "})
+    assert rc == 1 and written is None and not seen, (rc, text)
+    err = [l for l in text.splitlines() if l.startswith("::error::")]
+    assert err and all(n in err[0] for n in ("TWOCAPTCHA_KEY", "TIPRANKS_BROWSER_ACCOUNT_ID",
+                                             "TIPRANKS_CDP_ENDPOINT", "TIPRANKS_PROXY")), err
+
+
+@check("canary.yml: the key, account variable and stored endpoint reach ONLY the chooser step; the scrape reads .env")
+def _():
+    wf = (ROOT / ".github" / "workflows" / "canary.yml").read_text(encoding="utf-8")
+    live = wf[wf.index("  canary-live:"):wf.index("  canary-datacentre:")]
+    job_env = live[live.index("    env:"):live.index("    steps:")]
+    assert "TIPRANKS_CDP_ENDPOINT" not in job_env and "TWOCAPTCHA_KEY" not in job_env, job_env
+    step = live[live.index("id: endpoint"):live.index("- run: |")]
+    for needed in ("TWOCAPTCHA_KEY: ${{ secrets.TWOCAPTCHA_KEY }}",
+                   "ACCOUNT_ID: ${{ vars.TIPRANKS_BROWSER_ACCOUNT_ID }}",
+                   "STORED_CDP_ENDPOINT: ${{ secrets.TIPRANKS_CDP_ENDPOINT }}",
+                   "umask 077", "python3 .github/canary_endpoint.py"):
+        assert needed in step, needed
+    assert live.index("id: endpoint") < live.index("python3 playwright_scraper.py")
+    assert live.count("secrets.TWOCAPTCHA_KEY") == 1 and live.count("secrets.TIPRANKS_CDP_ENDPOINT") == 1
+    assert ".env" not in live[live.index("upload-artifact"):], "the .env must never be uploaded"
+
+
 def main() -> int:
     passed = 0
     for name, fn in _checks:
