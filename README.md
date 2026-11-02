@@ -1,4 +1,4 @@
-# TipRanks Scraper
+# TipRanks Scraper — Smart Score, Analyst Ratings and Price Targets in Python
 
 ![release](https://img.shields.io/github/v/release/2scraper/tipranks-scraper)
 ![tests](https://github.com/2scraper/tipranks-scraper/actions/workflows/tests.yml/badge.svg)
@@ -7,6 +7,8 @@
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 ![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-informational)
 ![credentials-optional](https://img.shields.io/badge/credentials-optional-blue)
+
+**TipRanks scraper** — an open-source (MIT) Python tool that reads a ticker's tipranks.com forecast page and writes its Smart Score, analyst consensus (Buy/Hold/Sell) and price targets to JSON or CSV, with no account or login. The default is a local headless Chromium with no proxy and no key, but Cloudflare can challenge it: GitHub Actions' datacentre addresses were refused on every scheduled run from 2026-10-01 to 2026-10-15, so a proxy or the 2Captcha Scraping Browser API is the opt-in fallback. Use it to track analyst sentiment and price targets across a watchlist, or to compare two runs with the bundled diff tool.
 
 Scrapes one thing from tipranks.com: a stock ticker's forecast-page
 snapshot — Smart Score, analyst consensus (Buy/Hold/Sell), and price
@@ -430,3 +432,21 @@ list and the live-testing checklist.
   `BRK.B`, is confirmed live).
 - No `local_e2e_test.py` — see `TESTING.md` for why a single ticker fetch
   doesn't need one the way a paginated, proxy-rotating scraper does.
+
+## Guides
+
+- [How to scrape TipRanks: step-by-step guide](https://2captcha.com/h/how-to-scrape-tipranks)
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [Binance scraper](https://github.com/2scraper/binance-scraper) — P2P adverts, copy-trading portfolios and announcements…
+- [Google Finance scraper](https://github.com/2scraper/google-finance-scraper) — Quotes, quarterly financials, analyst targets, OHLCV, market…
+- [OpenSea scraper](https://github.com/2scraper/opensea-scraper) — NFT items, collection rankings and activity feeds…
+- [Polymarket scraper](https://github.com/2scraper/polymarket-scraper) — Prediction-market prices, order books, volumes and on-chain…
+- [Screener.in scraper](https://github.com/2scraper/screener-scraper) — Any screener.in stock screen or sector listing
+- [Better Business Bureau scraper](https://github.com/2scraper/bbb-scraper) — BBB search and category listings with no key or proxy, plus…
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
